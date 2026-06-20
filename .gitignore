@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Environment
+.env
+apps/api/.env
+frontend/.env
+apps/*/.env
+
+# Uploads & data
+uploads/
+data/
+*.db
+
+# ML models (DVC tracked)
+models/detection/*.pt
+models/onnx/*.onnx
+
+# IDE
+.idea/
+.vscode/
