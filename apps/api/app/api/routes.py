@@ -1,0 +1,179 @@
+import logging
+import math
+import uuid
+from pathlib import Path
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.recognition import RecognitionRequest, RecognitionStatus
+from app.models.schemas import (
+    RecognitionRequestListResponse,
+    RecognitionRequestResponse,
+    RecognitionRequestSubmitResponse,
+)
+from app.services.storage import (
+    ALLOWED_EXTENSIONS,
+    StorageService,
+    get_storage_service,
+    validate_image_magic,
+)
+from app.shared.database import get_db
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/recognition", tags=["recognition"])
+
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+CONTENT_TYPE_MAP = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+}
+
+
+def _to_response(record: RecognitionRequest) -> RecognitionRequestResponse:
+    return RecognitionRequestResponse.model_validate(record)
+
+
+@router.post(
+    "",
+    response_model=RecognitionRequestSubmitResponse,
+    summary="Upload image for plate recognition",
+    description="Accepts JPEG/PNG image, stores it, creates a recognition request, and queues async processing.",
+)
+async def create_recognition_request(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageService = Depends(get_storage_service),
+) -> RecognitionRequestSubmitResponse:
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    if file.content_type not in CONTENT_TYPE_MAP:
+        raise HTTPException(
+            status_code=400,
+            detail="Allowed image types: image/jpeg, image/png",
+        )
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File exceeds 10MB limit")
+
+    extension = CONTENT_TYPE_MAP[file.content_type]
+    if not validate_image_magic(content, extension):
+        raise HTTPException(status_code=400, detail="File content does not match image type")
+
+    request_id = uuid.uuid4()
+    filename = f"{request_id}.{extension}"
+    image_url = await storage.save(filename, content)
+
+    record = RecognitionRequest(
+        id=request_id,
+        image_url=image_url,
+        status=RecognitionStatus.NOT_STARTED,
+    )
+    db.add(record)
+    await db.flush()
+
+    from app.worker.tasks import process_plate_recognition
+
+    process_plate_recognition.delay(str(request_id))
+
+    logger.info("Created recognition request %s", request_id)
+    return RecognitionRequestSubmitResponse(
+        request_id=record.id,
+        status=record.status,
+        created_at=record.created_at,
+    )
+
+
+@router.get(
+    "/{request_id}",
+    response_model=RecognitionRequestResponse,
+    summary="Get recognition request by ID",
+)
+async def get_recognition_request(
+    request_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> RecognitionRequestResponse:
+    record = await db.get(RecognitionRequest, request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Recognition request not found")
+    return _to_response(record)
+
+
+@router.get(
+    "",
+    response_model=RecognitionRequestListResponse,
+    summary="List recognition requests",
+)
+async def list_recognition_requests(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> RecognitionRequestListResponse:
+    total_result = await db.execute(select(func.count()).select_from(RecognitionRequest))
+    total = total_result.scalar_one()
+
+    offset = (page - 1) * page_size
+    result = await db.execute(
+        select(RecognitionRequest)
+        .order_by(RecognitionRequest.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    items = [_to_response(r) for r in result.scalars().all()]
+    total_pages = math.ceil(total / page_size) if total else 0
+
+    return RecognitionRequestListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.post(
+    "/{request_id}/reprocess",
+    response_model=RecognitionRequestSubmitResponse,
+    summary="Reprocess a failed or needs-review request",
+)
+async def reprocess_recognition_request(
+    request_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> RecognitionRequestSubmitResponse:
+    record = await db.get(RecognitionRequest, request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Recognition request not found")
+
+    if record.status not in (RecognitionStatus.FAILED, RecognitionStatus.NEEDS_REVIEW):
+        raise HTTPException(
+            status_code=400,
+            detail="Only FAILED or NEEDS_REVIEW requests can be reprocessed",
+        )
+
+    record.plate_number = None
+    record.error_message = None
+    record.confidence_score = None
+    record.detection_confidence = None
+    record.ocr_confidence = None
+    record.needs_review = False
+    record.bounding_box = None
+    record.plate_region = None
+    record.metadata_json = None
+    record.status = RecognitionStatus.NOT_STARTED
+    await db.flush()
+
+    from app.worker.tasks import process_plate_recognition
+
+    process_plate_recognition.delay(str(request_id))
+    logger.info("Requeued recognition request %s", request_id)
+
+    return RecognitionRequestSubmitResponse(
+        request_id=record.id,
+        status=record.status,
+        created_at=record.created_at,
+    )
