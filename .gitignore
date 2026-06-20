@@ -9,6 +9,8 @@ venv/
 # Environment
 .env
 apps/api/.env
+frontend/.env
+apps/*/.env
 
 # Uploads & data
 uploads/
