@@ -32,6 +32,10 @@ class StorageService(ABC):
         """Save file and return public URL/path."""
 
     @abstractmethod
+    async def save_path(self, filename: str, source_path: str) -> str:
+        """Save file from a local path and return public URL/path."""
+
+    @abstractmethod
     async def get_url(self, filename: str) -> str:
         """Return URL for stored file."""
 
@@ -49,6 +53,12 @@ class LocalStorage(StorageService):
         path = self.upload_dir / filename
         path.write_bytes(content)
         logger.debug("Saved file to %s", path)
+        return f"/uploads/{filename}"
+
+    async def save_path(self, filename: str, source_path: str) -> str:
+        path = self.upload_dir / filename
+        path.write_bytes(Path(source_path).read_bytes())
+        logger.debug("Saved file from %s to %s", source_path, path)
         return f"/uploads/{filename}"
 
     async def get_url(self, filename: str) -> str:
@@ -97,6 +107,14 @@ class MinioStorage(StorageService):
         )
         return filename
 
+    def save_path_sync(self, filename: str, source_path: str) -> str:
+        self.client.fput_object(
+            bucket_name=self.bucket,
+            object_name=filename,
+            file_path=source_path,
+        )
+        return filename
+
     def get_url_sync(self, filename: str) -> str:
         from datetime import timedelta
         url = self.client.presigned_get_object(
@@ -121,6 +139,11 @@ class MinioStorage(StorageService):
         import asyncio
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.save_sync, filename, content)
+
+    async def save_path(self, filename: str, source_path: str) -> str:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.save_path_sync, filename, source_path)
 
     async def get_url(self, filename: str) -> str:
         import asyncio

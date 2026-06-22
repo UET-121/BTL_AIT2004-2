@@ -15,10 +15,11 @@ import {
   RotateCcw,
   Search,
   UploadCloud,
+  Trash2,
   X,
   ZoomIn,
 } from 'lucide-react'
-import { getApiBaseUrl, getRecognition, listRecognitions, reprocessRecognition, uploadRecognition } from './api'
+import { deleteRecognition, getApiBaseUrl, getRecognition, listRecognitions, reprocessRecognition, uploadRecognition } from './api'
 import type { BoundingBox, RecognitionRequest, RecognitionStatus, RecognitionSubmitResponse, UiRequest } from './types'
 import { isTerminalStatus } from './types'
 
@@ -215,10 +216,12 @@ function Header({
   onRefresh,
   onToggleTheme,
   processingCount,
+  refreshing,
 }: {
-  onRefresh: () => void
+  onRefresh: () => void | Promise<void>
   onToggleTheme: () => void
   processingCount: number
+  refreshing: boolean
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-border/80 bg-background/95 backdrop-blur">
@@ -233,7 +236,7 @@ function Header({
           </div>
           <div>
             <p className="text-sm font-semibold leading-tight">License Plate Admin</p>
-            <p className="font-mono text-[11px] text-muted-foreground">Frontend SPA · backend connected</p>
+            <p className="font-mono text-[11px] text-muted-foreground">HyperCan Team</p>
           </div>
         </button>
 
@@ -245,11 +248,12 @@ function Header({
           <button
             type="button"
             onClick={onRefresh}
-            className="inline-flex size-10 items-center justify-center border border-border bg-card transition hover:bg-secondary"
+            disabled={refreshing}
+            className="inline-flex size-10 items-center justify-center border border-border bg-card transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
             aria-label="Refresh"
             title="Refresh"
           >
-            <RefreshCcw size={16} />
+            <RefreshCcw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
           <button
             type="button"
@@ -500,28 +504,88 @@ function NetworkBanner({ message }: { message: string }) {
   )
 }
 
+function DeleteConfirmDialog({
+  item,
+  onCancel,
+  onConfirm,
+  busy,
+}: {
+  item: UiRequest
+  onCancel: () => void
+  onConfirm: () => void
+  busy: boolean
+}) {
+  return (
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
+      <div className="w-full max-w-md border border-border bg-card p-5 shadow-2xl">
+        <h3 className="font-semibold">Xóa mẫu này?</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Mẫu <span className="font-mono">{formatShortId(item.id)}</span> sẽ bị xóa khỏi database và storage, bất kể đang ở trạng thái nào.
+        </p>
+        <div className="mt-4 rounded border border-border bg-background px-3 py-2 text-sm">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-muted-foreground">Trạng thái</span>
+            <span className="font-mono">{item.status}</span>
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-4">
+            <span className="text-muted-foreground">Biển số</span>
+            <span className="font-mono">{item.plate_number || '—'}</span>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="border border-border px-4 py-2 hover:bg-secondary" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 border border-red-400/20 bg-red-500/10 px-4 py-2 text-red-100 hover:bg-red-500/20 disabled:opacity-60"
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            <Trash2 size={16} /> {busy ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function RequestThumb({ item }: { item: UiRequest }) {
   const [broken, setBroken] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const src = resolveMediaUrl(item.thumbnail_url || item.media_url)
   const isVideo = isVideoMedia(src)
 
   return (
-    <div className="relative overflow-hidden bg-secondary">
+    <div
+      className="relative h-full w-full overflow-hidden bg-secondary transition-colors duration-200"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {broken ? (
         <div className="grid h-full w-full place-items-center text-muted-foreground">
           <FileImage size={22} />
         </div>
       ) : isVideo ? (
-        <video
-          src={src}
-          className="h-full w-full object-cover"
-          muted
-          playsInline
-          autoPlay
-          loop
-          preload="metadata"
-          onError={() => setBroken(true)}
-        />
+        hovered ? (
+          <video
+            src={src}
+            className="h-full w-full object-cover"
+            muted
+            playsInline
+            autoPlay
+            loop
+            preload="metadata"
+            onError={() => setBroken(true)}
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-slate-800 text-slate-400">
+            <Camera size={18} />
+            <span className="font-mono text-[9px] uppercase tracking-wider bg-slate-900/60 px-1 py-0.5 rounded text-slate-300">
+              Video
+            </span>
+          </div>
+        )
       ) : (
         <img src={src} onError={() => setBroken(true)} alt="Thumbnail" className="h-full w-full object-cover" />
       )}
@@ -534,10 +598,12 @@ function RequestList({
   loading,
   items,
   onOpen,
+  onDelete,
 }: {
   loading: boolean
   items: UiRequest[]
   onOpen: (id: string) => void
+  onDelete: (item: UiRequest) => void
 }) {
   if (loading) return <ListSkeleton />
   if (!items.length) return <EmptyState />
@@ -552,6 +618,7 @@ function RequestList({
             <th className="px-3">Biển số</th>
             <th className="px-3">Thời gian</th>
             <th className="pr-3 text-right">Mở</th>
+            <th className="pr-3 text-right">Xóa</th>
           </tr>
         </thead>
         <tbody>
@@ -568,6 +635,20 @@ function RequestList({
               <td className="pr-3 text-right">
                 <Eye className="inline" size={17} />
               </td>
+              <td className="pr-3 text-right">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onDelete(item)
+                  }}
+                  className="inline-flex items-center gap-1 rounded border border-red-400/20 bg-red-500/10 px-2 py-1 text-xs text-red-100 hover:bg-red-500/20"
+                  aria-label={`Delete ${item.id}`}
+                  title="Delete"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -575,7 +656,19 @@ function RequestList({
 
       <div className="divide-y divide-border md:hidden">
         {items.map((item) => (
-          <button key={item.id} type="button" onClick={() => onOpen(item.id)} className="flex w-full gap-3 p-3 text-left">
+          <div
+            key={item.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpen(item.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onOpen(item.id)
+              }
+            }}
+            className="flex w-full gap-3 p-3 text-left"
+          >
             <div className="h-16 w-24 shrink-0 overflow-hidden border border-border">
               <RequestThumb item={item} />
             </div>
@@ -586,7 +679,19 @@ function RequestList({
               <p className="mt-1.5 truncate font-mono font-semibold">{item.plate_number || formatShortId(item.id)}</p>
               <p className="text-xs text-muted-foreground">{formatDate(item.created_at)}</p>
             </div>
-          </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                onDelete(item)
+              }}
+              className="ml-auto inline-flex h-9 shrink-0 items-center justify-center rounded border border-red-400/20 bg-red-500/10 px-2 text-red-100 hover:bg-red-500/20"
+              aria-label={`Delete ${item.id}`}
+              title="Delete"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
         ))}
       </div>
     </div>
@@ -644,11 +749,13 @@ function DetailView({
   loading,
   onBack,
   onReprocess,
+  onDelete,
 }: {
   item: UiRequest | null
   loading: boolean
   onBack: () => void
   onReprocess: (id: string) => void
+  onDelete: (item: UiRequest) => void
 }) {
   const [zoom, setZoom] = useState(1)
   const [confirm, setConfirm] = useState(false)
@@ -822,15 +929,24 @@ function DetailView({
               <p className="mt-4 border border-red-400/25 bg-red-500/10 p-3 text-sm text-red-100">{item.error_message}</p>
             )}
 
-            {['FAILED', 'NEEDS_REVIEW'].includes(item.status) && (
+            <div className="mt-4 grid gap-2">
+              {['FAILED', 'NEEDS_REVIEW'].includes(item.status) && (
+                <button
+                  type="button"
+                  onClick={() => setConfirm(true)}
+                  className="inline-flex w-full items-center justify-center gap-2 bg-accent px-4 py-2.5 text-accent-foreground transition hover:opacity-90"
+                >
+                  <RotateCcw size={16} /> Reprocess
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => setConfirm(true)}
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 bg-accent px-4 py-2.5 text-accent-foreground transition hover:opacity-90"
+                onClick={() => onDelete(item)}
+                className="inline-flex w-full items-center justify-center gap-2 border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-red-100 transition hover:bg-red-500/20"
               >
-                <RotateCcw size={16} /> Reprocess
+                <Trash2 size={16} /> Delete
               </button>
-            )}
+            </div>
           </div>
 
           <ConfidenceCard item={item} />
@@ -876,9 +992,12 @@ export default function App() {
   const [detailItem, setDetailItem] = useState<UiRequest | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<UiRequest | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [toast, setToast] = useState<ToastState>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
   const toastTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -914,8 +1033,10 @@ export default function App() {
 
   const apiBase = getApiBaseUrl()
 
-  const loadList = async (pageToLoad = page, sizeToLoad = pageSize) => {
-    setListLoading(true)
+  const loadList = async (pageToLoad = page, sizeToLoad = pageSize, options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setListLoading(true)
+    }
     try {
       const response = await listRecognitions(pageToLoad, sizeToLoad)
       setListItems(response.items.map(normalizeRequest))
@@ -925,12 +1046,16 @@ export default function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Không tải được danh sách')
     } finally {
-      setListLoading(false)
+      if (!options?.silent) {
+        setListLoading(false)
+      }
     }
   }
 
-  const loadDetail = async (requestId: string) => {
-    setDetailLoading(true)
+  const loadDetail = async (requestId: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setDetailLoading(true)
+    }
     try {
       const item = normalizeRequest(await getRecognition(requestId))
       setDetailItem(item)
@@ -943,14 +1068,25 @@ export default function App() {
         setNotice(error instanceof Error ? error.message : 'Không tải được chi tiết')
       }
     } finally {
-      setDetailLoading(false)
+      if (!options?.silent) {
+        setDetailLoading(false)
+      }
     }
+  }
+
+  const refreshCurrentView = async (options?: { silent?: boolean }) => {
+    if (route.view === 'detail') {
+      await loadDetail(route.id, options)
+      return
+    }
+
+    await loadList(page, pageSize, options)
   }
 
   useEffect(() => {
     void loadList(page, pageSize)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, refreshToken])
+  }, [page, pageSize])
 
   useEffect(() => {
     if (route.view !== 'detail') {
@@ -959,32 +1095,40 @@ export default function App() {
     }
     void loadDetail(route.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.view, route.view === 'detail' ? route.id : '', refreshToken])
+  }, [route.view, route.view === 'detail' ? route.id : ''])
 
   useEffect(() => {
     const shouldPollList = listItems.some((item) => !terminal(item.status))
-    if (!shouldPollList) return
+    const shouldPollDetail = route.view === 'detail' && detailItem != null && !terminal(detailItem.status)
+    if (!shouldPollList && !shouldPollDetail) return
 
     const timer = window.setInterval(() => {
       setRefreshToken((value) => value + 1)
     }, POLL_MS)
 
     return () => window.clearInterval(timer)
-  }, [listItems])
+  }, [listItems, detailItem, route.view])
 
   useEffect(() => {
-    if (route.view !== 'detail' || !detailItem || terminal(detailItem.status)) return
-
-    const timer = window.setInterval(() => {
-      setRefreshToken((value) => value + 1)
-    }, POLL_MS)
-
-    return () => window.clearInterval(timer)
-  }, [detailItem, route.view])
+    if (refreshToken === 0) return
+    void loadList(page, pageSize, { silent: true })
+    if (route.view === 'detail' && detailItem && !terminal(detailItem.status)) {
+      void loadDetail(route.id, { silent: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshToken])
 
   const processingCount = useMemo(() => listItems.filter((item) => !terminal(item.status)).length, [listItems])
 
-  const handleRefresh = () => setRefreshToken((value) => value + 1)
+  const handleRefresh = async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      await refreshCurrentView()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const handleThemeToggle = () => setTheme((value) => (value === 'dark' ? 'light' : 'dark'))
 
@@ -1013,11 +1157,38 @@ export default function App() {
     }
   }
 
+  const handleDeleteRequest = (item: UiRequest) => {
+    setDeleteTarget(item)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleteBusy(true)
+    try {
+      await deleteRecognition(deleteTarget.id)
+      applyToast('Xóa thành công')
+      if (route.view === 'detail' && route.id === deleteTarget.id) {
+        navigate({ view: 'home' })
+      }
+      setDeleteTarget(null)
+      setRefreshToken((value) => value + 1)
+    } catch (error) {
+      applyToast(error instanceof Error ? error.message : 'Xóa thất bại', 'error')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
   const selectedItem = route.view === 'detail' ? detailItem : null
 
   return (
     <AppShell>
-      <Header onRefresh={handleRefresh} onToggleTheme={handleThemeToggle} processingCount={processingCount} />
+      <Header
+        onRefresh={handleRefresh}
+        onToggleTheme={handleThemeToggle}
+        processingCount={processingCount}
+        refreshing={refreshing}
+      />
 
       {notice && <NetworkBanner message={notice} />}
 
@@ -1027,6 +1198,7 @@ export default function App() {
           item={selectedItem}
           onBack={() => navigate({ view: 'home' })}
           onReprocess={handleReprocess}
+          onDelete={handleDeleteRequest}
         />
       ) : route.view === 'not-found' ? (
         <main className="mx-auto max-w-5xl p-6">
@@ -1045,9 +1217,7 @@ export default function App() {
           <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6">
             <div className="mb-3 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
               <div>
-                <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">GET /api/v1/recognition</p>
                 <h1 className="text-2xl font-semibold">Lịch sử nhận diện</h1>
-                <p className="mt-1 text-sm text-muted-foreground">API: {apiBase}</p>
               </div>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Activity size={14} />
@@ -1059,6 +1229,7 @@ export default function App() {
               loading={listLoading}
               items={listItems}
               onOpen={(id) => navigate({ view: 'detail', id })}
+              onDelete={handleDeleteRequest}
             />
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
@@ -1104,6 +1275,15 @@ export default function App() {
             </div>
           </main>
         </>
+      )}
+
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          item={deleteTarget}
+          onCancel={() => !deleteBusy && setDeleteTarget(null)}
+          onConfirm={confirmDelete}
+          busy={deleteBusy}
+        />
       )}
 
       {toast && (

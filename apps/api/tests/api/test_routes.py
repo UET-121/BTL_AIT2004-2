@@ -105,3 +105,48 @@ async def test_reprocess_needs_review(client: AsyncClient, sample_png_bytes: byt
     assert response.status_code == 200
     assert response.json()["status"] == "NOT_STARTED"
 
+
+@pytest.mark.asyncio
+async def test_delete_request(client: AsyncClient, sample_png_bytes: bytes):
+    upload = await client.post(
+        "/api/v1/recognition",
+        files={"file": ("plate.png", sample_png_bytes, "image/png")},
+    )
+    request_id = upload.json()["request_id"]
+
+    response = await client.delete(f"/api/v1/recognition/{request_id}")
+    assert response.status_code == 204
+    assert response.content == b""
+
+    get_response = await client.get(f"/api/v1/recognition/{request_id}")
+    assert get_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_completed_request(client: AsyncClient, db_session):
+    from app.models.recognition import RecognitionRequest, RecognitionStatus
+    import uuid
+
+    record = RecognitionRequest(
+        id=uuid.uuid4(),
+        image_url="/uploads/test.png",
+        status=RecognitionStatus.COMPLETED,
+        plate_number="ABC1D23",
+    )
+    db_session.add(record)
+    await db_session.commit()
+
+    response = await client.delete(f"/api/v1/recognition/{record.id}")
+    assert response.status_code == 204
+
+    get_response = await client.get(f"/api/v1/recognition/{record.id}")
+    assert get_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_request_not_found(client: AsyncClient):
+    response = await client.delete(
+        "/api/v1/recognition/550e8400-e29b-41d4-a716-446655440000"
+    )
+    assert response.status_code == 404
+

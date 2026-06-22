@@ -71,3 +71,16 @@ export async function reprocessRecognition(requestId: string) {
     method: 'POST',
   })
 }
+
+export async function deleteRecognition(requestId: string) {
+  const response = await fetch(`${baseUrl}/api/v1/recognition/${requestId}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    const error = new Error(await readError(response)) as ApiError
+    error.status = response.status
+    error.detail = error.message
+    throw error
+  }
+}
