@@ -1,0 +1,24 @@
+[project]
+name = "backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "sqlalchemy>=2.0.0",
+    "asyncpg",
+    "sqlalchemy",
+    "pydantic-settings",
+    "python-multipart>=0.0.26",
+    "boto3>=1.42.96",
+    "redis>=7.4.0",
+    "aio-pika>=9.6.2",
+    "python-jose[cryptography]>=3.5.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt==3.2.2",
+    "prometheus-fastapi-instrumentator>=7.1.0",
+    "pgvector>=0.4.2",
+    "pika>=1.4.0",
+    "pillow>=12.2.0",
+    "slowapi>=0.1.9",
+]

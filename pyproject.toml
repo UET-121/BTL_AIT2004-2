@@ -1,0 +1,11 @@
+[project]
+name = "Real-time-lpr-recognition-system"
+version = "0.1.0"
+description = "Dev tool libraries"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "jupyter>=1.1.1",
+    "numpy>=2.4.4",
+    "pandas>=3.0.2",
+]

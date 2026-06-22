@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shared-core" 
+version = "0.1.0"
+description = "Core library for LicensePlate Recognition System"
+
+dependencies = [
+    "sqlalchemy",
+    "asyncpg",
+    "pydantic",
+    "boto3",
+    "pgvector",
+    "redis",
+    "minio",
+    "httpx",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shared*"]
+
+[tool.pyright]
+extraPaths = ["/home/leduc1009/Real-time-lpr-recognition-system/shared_lib"]

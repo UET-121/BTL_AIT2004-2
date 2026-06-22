@@ -1,0 +1,119 @@
+# =============================================================================
+# Infrastructure Docker Compose
+# Monitoring (Prometheus, Grafana) + Backup (pg_backup, pgbackweb, system_setup)
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # MONITORING
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: license_plate_recognition_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    restart: unless-stopped
+    networks:
+      - default
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: license_plate_recognition_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - default
+
+  # ===========================================================================
+  # BACKUP
+  # ===========================================================================
+  pg_backup:
+    image: prodrigestivill/postgres-backup-local
+    container_name: license_plate_recognition_pg_backup
+    restart: always
+    volumes:
+      - ../backups/postgres:/backups
+    environment:
+      - POSTGRES_HOST=postgres_db
+      - POSTGRES_DB=license_plate_recognition_db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - SCHEDULE=@daily
+      - BACKUP_KEEP_DAYS=7
+      - BACKUP_KEEP_WEEKS=4
+      - BACKUP_KEEP_MONTHS=1
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    networks:
+      - default
+
+  pgbackweb:
+    image: eduardolat/pgbackweb:latest
+    container_name: license_plate_recognition_pgbackweb
+    ports:
+      - "8085:8085"
+    environment:
+      - PBW_POSTGRES_CONN_STRING=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_db:5432/pgbackweb_db?sslmode=disable
+      - PBW_ENCRYPTION_KEY=${PBW_ENCRYPTION_KEY}
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      pg_backup:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - default
+
+  # ===========================================================================
+  # SYSTEM SETUP (One-shot: migration + MinIO bucket + backup config)
+  # ===========================================================================
+  system_setup:
+    build:
+      context: ..
+      dockerfile: infrastructure/backup/Dockerfile.setup
+    container_name: license_plate_recognition_system_setup
+    volumes:
+      - ./backup:/app/backup_script
+      - ../migrations:/app/migrations
+    env_file:
+      - ../.env
+    environment:
+      - GOOSE_DRIVER=postgres
+      - GOOSE_DBSTRING=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_db:5432/license_plate_recognition_db?sslmode=disable
+    command: >
+      bash -c " echo '--- 1. CHẠY SCRIPT PYTHON (TẠO FILE & CẤU HÌNH BACKUP) ---'      && python /app/backup_script/script.py     && echo '--- 2. CHẠY MIGRATION BẬT PGVECTOR BẰNG GOOSE ---'     && goose -dir /app/migrations up     && echo '--- HOÀN TẤT! CONTAINER SẼ TỰ ĐÓNG ---' "
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      pgbackweb:
+        condition: service_started
+    networks:
+      - default
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: real-time-lpr-recognition-system_default

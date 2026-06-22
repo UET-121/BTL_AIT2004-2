@@ -1,0 +1,31 @@
+name: "license_plate_detection"
+platform: "tensorrt_plan"
+max_batch_size: 8
+
+input [
+  {
+    name: "input"
+    data_type: TYPE_FP32
+    dims: [ 640, 640, 3 ]
+  }
+]
+
+output [
+  {
+    name: "dfl_decode"
+    data_type: TYPE_FP32
+    dims: [ 8400, 5 ]
+  }
+]
+
+dynamic_batching {
+  preferred_batch_size: [ 4, 8 ]
+  max_queue_delay_microseconds: 1000
+}
+
+instance_group [
+  {
+    count: 2
+    kind: KIND_GPU
+  }
+]

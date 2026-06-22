@@ -1,0 +1,180 @@
+include:
+  - path: ./ai_inference/docker-compose.ai.yml
+
+services:
+  postgres_db:
+    image: pgvector/pgvector:pg15
+    container_name: license_plate_recognition_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_MULTIPLE_DATABASES: license_plate_recognition_db
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d license_plate_recognition_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./create-databases.sh:/docker-entrypoint-initdb.d/create-databases.sh
+    restart: unless-stopped
+    networks:
+      - default
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    container_name: license_plate_recognition_minio
+    ports:
+      - "9000:9000" # Cổng API để code FastAPI giao tiếp
+      - "9001:9001" # Cổng Giao diện Web (Console) cho Admin
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_DOMAIN: license_plate_recognition_minio
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    networks:
+      - default
+      - lpr_system_network
+
+  redis:
+    image: redis:7.2.5-alpine
+    container_name: license_plate_recognition_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-lru
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 100M
+    networks:
+      - default
+      - lpr_system_network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: license_plate_recognition_mq
+    ports:
+      - "5672:5672"
+      - "15672:15672" #Manage DB
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - default
+      - lpr_system_network
+
+  backend_api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: license_plate_recognition_api
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_db:5432/license_plate_recognition_db
+      - RABBITMQ_URL=amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
+      - MINIO_URL=${MINIO_URL}
+    volumes:
+      - ./backend:/app/backend
+      - ./shared_lib:/app/shared_lib
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      ai_worker:
+        condition: service_started
+    networks:
+      - lpr_system_network
+      - default
+
+  worker_consumer:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: license_plate_recognition_worker
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_db:5432/license_plate_recognition_db
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - MINIO_URL=${MINIO_URL}
+    volumes:
+      - ./worker:/app/worker
+      - ./shared_lib:/app/shared_lib
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    networks:
+      - default
+      - lpr_system_network
+    depends_on:
+      - backend_api
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: license_plate_recognition_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend_api
+      - frontend
+    networks:
+      - default
+      - lpr_system_network
+
+volumes:
+  pgdata:
+  minio_data:
+
+networks:
+  default:
+    name: real-time-lpr-recognition-system_default
+  lpr_system_network:
+    driver: bridge
+    name: lpr_system_network

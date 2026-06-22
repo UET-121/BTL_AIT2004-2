@@ -1,0 +1,72 @@
+services:
+  ai_worker:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    container_name: ai_worker
+    volumes:
+      - ./streaming:/app/streaming
+      - ./engine:/app/engine
+    depends_on:
+      - triton_server
+      - rabbitmq
+    environment:
+      - TRITON_URL=triton_server:8001
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - REDIS_URL=${REDIS_URL}
+      - MINIO_URL=${MINIO_URL}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME}
+    networks:
+      - ai_network
+      - lpr_system_network
+
+  triton_server:
+    image: nvcr.io/nvidia/tritonserver:24.03-py3
+    container_name: triton_server
+    runtime: nvidia
+    volumes:
+      - ./model_repo:/models
+    command: ["tritonserver", "--model-repository=/models", "--model-control-mode=explicit", "--load-model=license_plate_detection", "--load-model=license_plate_recognition"]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu, compute, utility ]
+    ports:
+      - "8003:8003" # Cổng HTTP
+      - "8001:8001" # Cổng gRPC
+      - "8002:8002" # Cổng Metrics
+    restart: unless-stopped
+    networks:
+      - ai_network
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml
+    networks:
+      - ai_network
+      - lpr_system_network
+    environment:
+      - MTX_API=yes
+      - MTX_APIADDRESS=:9997
+      - MTX_AUTHINTERNAL_ENABLED=false
+    ports:
+      - "8189:8189/udp"
+
+networks:
+  ai_network:
+    driver: bridge
+    internal: true
+  lpr_system_network:
+    driver: bridge
+    name: lpr_system_network

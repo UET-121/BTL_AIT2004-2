@@ -1,0 +1,9 @@
+[project]
+name = "model-repo"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "onnx>=1.21.0",
+    "onnxruntime>=1.25.1",
+]
