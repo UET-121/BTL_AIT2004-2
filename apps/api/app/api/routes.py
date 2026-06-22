@@ -26,11 +26,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/recognition", tags=["recognition"])
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB for video support
 CONTENT_TYPE_MAP = {
     "image/jpeg": "jpg",
+    "image/jpg": "jpg",
     "image/png": "png",
+    "video/mp4": "mp4",
+    "video/mpeg": "mpeg",
+    "video/quicktime": "mov",
+    "video/x-msvideo": "avi",
+    "video/x-matroska": "mkv",
 }
+
 
 
 def _to_response(record: RecognitionRequest) -> RecognitionRequestResponse:
@@ -48,22 +55,23 @@ async def create_recognition_request(
     db: AsyncSession = Depends(get_db),
     storage: StorageService = Depends(get_storage_service),
 ) -> RecognitionRequestSubmitResponse:
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
+    if not file.content_type or (not file.content_type.startswith("image/") and not file.content_type.startswith("video/")):
+        raise HTTPException(status_code=400, detail="File must be an image or video")
 
     if file.content_type not in CONTENT_TYPE_MAP:
         raise HTTPException(
             status_code=400,
-            detail="Allowed image types: image/jpeg, image/png",
+            detail="Allowed file types: image/jpeg, image/png, video/mp4, video/mpeg, video/quicktime, video/x-msvideo, video/x-matroska",
         )
 
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File exceeds 10MB limit")
+        raise HTTPException(status_code=400, detail="File exceeds 50MB limit")
 
     extension = CONTENT_TYPE_MAP[file.content_type]
-    if not validate_image_magic(content, extension):
-        raise HTTPException(status_code=400, detail="File content does not match image type")
+    if file.content_type.startswith("image/"):
+        if not validate_image_magic(content, extension):
+            raise HTTPException(status_code=400, detail="File content does not match image type")
 
     request_id = uuid.uuid4()
     filename = f"{request_id}.{extension}"
@@ -97,11 +105,14 @@ async def create_recognition_request(
 async def get_recognition_request(
     request_id: UUID,
     db: AsyncSession = Depends(get_db),
+    storage: StorageService = Depends(get_storage_service),
 ) -> RecognitionRequestResponse:
     record = await db.get(RecognitionRequest, request_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Recognition request not found")
-    return _to_response(record)
+    res = _to_response(record)
+    res.image_url = await storage.get_url(record.image_url)
+    return res
 
 
 @router.get(
@@ -113,6 +124,7 @@ async def list_recognition_requests(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    storage: StorageService = Depends(get_storage_service),
 ) -> RecognitionRequestListResponse:
     total_result = await db.execute(select(func.count()).select_from(RecognitionRequest))
     total = total_result.scalar_one()
@@ -124,7 +136,12 @@ async def list_recognition_requests(
         .offset(offset)
         .limit(page_size)
     )
-    items = [_to_response(r) for r in result.scalars().all()]
+    items = []
+    for r in result.scalars().all():
+        res = _to_response(r)
+        res.image_url = await storage.get_url(r.image_url)
+        items.append(res)
+        
     total_pages = math.ceil(total / page_size) if total else 0
 
     return RecognitionRequestListResponse(

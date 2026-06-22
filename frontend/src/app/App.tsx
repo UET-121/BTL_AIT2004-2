@@ -18,7 +18,6 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react'
-import { demoRequests } from './demo-data'
 import { getApiBaseUrl, getRecognition, listRecognitions, reprocessRecognition, uploadRecognition } from './api'
 import type { BoundingBox, RecognitionRequest, RecognitionStatus, RecognitionSubmitResponse, UiRequest } from './types'
 import { isTerminalStatus } from './types'
@@ -33,8 +32,26 @@ type ToastState = { message: string; kind: 'success' | 'warning' | 'error' } | n
 
 const PAGE_SIZES = [5, 10, 20]
 const POLL_MS = 2000
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024
-const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png'])
+const MAX_MEDIA_SIZE = 50 * 1024 * 1024
+const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'])
+const MEDIA_VIDEO_RE = /\.(mp4|avi|mov|mpeg|mkv)(?:$|\?)/i
+
+function resolveMediaUrl(url: string) {
+  if (!url) return url
+  if (/^(https?:|data:|blob:|\/\/)/i.test(url)) return url
+  if (url.startsWith('/')) {
+    const apiBase = getApiBaseUrl()
+    if (apiBase && apiBase !== 'same-origin proxy') {
+      return new URL(url, apiBase).toString()
+    }
+  }
+  return url
+}
+
+function isVideoMedia(url: string) {
+  return MEDIA_VIDEO_RE.test(url)
+}
+
 
 const statusLabel: Record<RecognitionStatus, string> = {
   NOT_STARTED: 'Chưa bắt đầu',
@@ -72,8 +89,8 @@ function formatShortId(id: string) {
   return `#${id.slice(0, 8)}`
 }
 
-function isAllowedImage(file: File) {
-  return ALLOWED_TYPES.has(file.type)
+function isAllowedMedia(file: File) {
+  return ALLOWED_TYPES.has(file.type) || file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
 }
 
 function makeObjectUrl(file: Blob) {
@@ -81,13 +98,16 @@ function makeObjectUrl(file: Blob) {
 }
 
 function normalizeRequest(item: RecognitionRequest): UiRequest {
+  const mediaUrl = resolveMediaUrl(item.image_url)
+  const isVideo = isVideoMedia(mediaUrl)
   return {
     ...item,
-    media_type: 'image',
-    media_url: item.image_url,
-    thumbnail_url: item.image_url,
+    media_type: isVideo ? 'video' : 'image',
+    media_url: mediaUrl,
+    thumbnail_url: mediaUrl,
   }
 }
+
 
 function statusBadge(status: RecognitionStatus) {
   return (
@@ -192,12 +212,10 @@ function AppShell({ children }: { children: ReactNode }) {
 }
 
 function Header({
-  mode,
   onRefresh,
   onToggleTheme,
   processingCount,
 }: {
-  mode: LoadMode
   onRefresh: () => void
   onToggleTheme: () => void
   processingCount: number
@@ -215,7 +233,7 @@ function Header({
           </div>
           <div>
             <p className="text-sm font-semibold leading-tight">License Plate Admin</p>
-            <p className="font-mono text-[11px] text-muted-foreground">Frontend SPA · {mode === 'api' ? 'backend connected' : 'demo fallback'}</p>
+            <p className="font-mono text-[11px] text-muted-foreground">Frontend SPA · backend connected</p>
           </div>
         </button>
 
@@ -281,19 +299,25 @@ function UploadPanel({
     if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
     setPreviewUrl('')
     if (!picked) return
-    if (!isAllowedImage(picked)) {
-      setError('Chỉ chấp nhận JPG hoặc PNG.')
+    if (!isAllowedMedia(picked)) {
+      setError('Chỉ chấp nhận ảnh JPG/PNG hoặc video MP4/AVI/MOV/MKV.')
       return
     }
-    if (picked.size > MAX_IMAGE_SIZE) {
-      setError('Ảnh vượt quá 10MB.')
+    if (picked.size > MAX_MEDIA_SIZE) {
+      setError('File vượt quá 50MB.')
       return
     }
     if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
     const nextPreview = makeObjectUrl(picked)
     setFile(picked)
     setPreviewUrl(nextPreview)
-    setCropOpen(true)
+    
+    const isVid = picked.type.startsWith('video/') || picked.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
+    if (isVid) {
+      setCropOpen(false)
+    } else {
+      setCropOpen(true)
+    }
   }
 
   const confirm = async () => {
@@ -329,7 +353,7 @@ function UploadPanel({
             <input
               ref={inputRef}
               type="file"
-              accept="image/jpeg,image/png"
+              accept="image/jpeg,image/png,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska"
               className="hidden"
               onChange={(event) => pick(event.target.files?.[0])}
             />
@@ -338,8 +362,8 @@ function UploadPanel({
                 <UploadCloud size={22} />
               </div>
               <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Upload ảnh biển số</h2>
-                <p className="text-sm text-muted-foreground">JPG/PNG tối đa 10MB. Crop trung tâm 3:1 trước khi gửi.</p>
+                <h2 className="text-lg font-semibold">Upload ảnh/video biển số</h2>
+                <p className="text-sm text-muted-foreground">JPG/PNG/MP4/AVI/MOV tối đa 50MB. Ảnh sẽ được crop 3:1.</p>
                 {file && (
                   <p className="inline-flex items-center gap-1.5 text-sm text-accent">
                     <FileImage size={13} />
@@ -359,11 +383,28 @@ function UploadPanel({
             <button
               type="button"
               disabled={!file || busy || busyLocal}
-              onClick={() => setCropOpen(true)}
+              onClick={async () => {
+                if (file) {
+                  const isVid = file.type.startsWith('video/') || file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
+                  if (isVid) {
+                    setBusyLocal(true)
+                    try {
+                      await onSubmit({ file, previewUrl })
+                      reset()
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : 'Upload thất bại')
+                    } finally {
+                      setBusyLocal(false)
+                    }
+                  } else {
+                    setCropOpen(true)
+                  }
+                }
+              }}
               className="inline-flex w-full items-center justify-center gap-2 bg-accent px-4 py-2.5 font-semibold text-accent-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy || busyLocal ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-              {busy || busyLocal ? 'Đang upload...' : 'Crop & Upload'}
+              {busy || busyLocal ? 'Đang upload...' : (file && (file.type.startsWith('video/') || file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)) ? 'Upload Video' : 'Crop & Upload')}
             </button>
           </div>
         </div>
@@ -461,7 +502,8 @@ function NetworkBanner({ message }: { message: string }) {
 
 function RequestThumb({ item }: { item: UiRequest }) {
   const [broken, setBroken] = useState(false)
-  const src = item.thumbnail_url || item.media_url
+  const src = resolveMediaUrl(item.thumbnail_url || item.media_url)
+  const isVideo = isVideoMedia(src)
 
   return (
     <div className="relative overflow-hidden bg-secondary">
@@ -469,6 +511,17 @@ function RequestThumb({ item }: { item: UiRequest }) {
         <div className="grid h-full w-full place-items-center text-muted-foreground">
           <FileImage size={22} />
         </div>
+      ) : isVideo ? (
+        <video
+          src={src}
+          className="h-full w-full object-cover"
+          muted
+          playsInline
+          autoPlay
+          loop
+          preload="metadata"
+          onError={() => setBroken(true)}
+        />
       ) : (
         <img src={src} onError={() => setBroken(true)} alt="Thumbnail" className="h-full w-full object-cover" />
       )}
@@ -494,7 +547,7 @@ function RequestList({
       <table className="hidden w-full text-sm md:table">
         <thead className="bg-secondary text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th className="p-3">Ảnh</th>
+            <th className="p-3">Phương tiện</th>
             <th className="px-3">Trạng thái</th>
             <th className="px-3">Biển số</th>
             <th className="px-3">Thời gian</th>
@@ -664,10 +717,10 @@ function DetailView({
         <section className="border border-border bg-card p-3">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-muted-foreground">IMAGE VIEWER</span>
+              <span className="font-mono text-xs text-muted-foreground">MEDIA VIEWER</span>
               <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold ring-1 bg-slate-500/10 text-slate-300 ring-slate-400/20">
                 <FileImage size={11} />
-                Ảnh
+                {item.media_type === 'video' ? 'Video' : 'Phương tiện'}
               </span>
             </div>
             <div className="flex gap-2">
@@ -682,18 +735,36 @@ function DetailView({
 
           <div className="relative overflow-hidden bg-black">
             <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }} className="relative">
-              <img
-                src={item.media_url}
-                className="aspect-[16/10] w-full object-cover"
-                alt="Ảnh biển số"
-                onLoad={(event) => {
-                  const image = event.currentTarget
-                  setNatural({
-                    width: image.naturalWidth || 1,
-                    height: image.naturalHeight || 1,
-                  })
-                }}
-              />
+              {item.media_type === 'video' ? (
+                <video
+                  src={item.media_url}
+                  className="aspect-[16/10] w-full object-cover"
+                  controls
+                  muted
+                  playsInline
+                  preload="metadata"
+                  onLoadedMetadata={(event) => {
+                    const video = event.currentTarget
+                    setNatural({
+                      width: video.videoWidth || 1,
+                      height: video.videoHeight || 1,
+                    })
+                  }}
+                />
+              ) : (
+                <img
+                  src={item.media_url}
+                  className="aspect-[16/10] w-full object-cover"
+                  alt="Phương tiện biển số"
+                  onLoad={(event) => {
+                    const image = event.currentTarget
+                    setNatural({
+                      width: image.naturalWidth || 1,
+                      height: image.naturalHeight || 1,
+                    })
+                  }}
+                />
+              )}
               {bboxStyle && (
                 <div className="absolute border-2 border-accent" style={bboxStyle}>
                   <span className="absolute -top-6 left-0 bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground">Plate</span>
@@ -795,7 +866,6 @@ function DetailView({
 
 export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
-  const [mode, setMode] = useState<LoadMode>(import.meta.env.VITE_USE_DEMO_DATA === 'true' ? 'demo' : 'api')
   const [route, setRoute] = useState<RouteState>(() => currentRoute())
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(5)
@@ -806,7 +876,6 @@ export default function App() {
   const [detailItem, setDetailItem] = useState<UiRequest | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
-  const [demoItems, setDemoItems] = useState<UiRequest[]>(() => demoRequests)
   const [toast, setToast] = useState<ToastState>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
@@ -848,33 +917,13 @@ export default function App() {
   const loadList = async (pageToLoad = page, sizeToLoad = pageSize) => {
     setListLoading(true)
     try {
-      if (mode === 'demo') {
-        const start = (pageToLoad - 1) * sizeToLoad
-        const items = demoItems.slice(start, start + sizeToLoad)
-        setListItems(items)
-        setListTotal(demoItems.length)
-        setTotalPages(Math.max(1, Math.ceil(demoItems.length / sizeToLoad)))
-        return
-      }
-
       const response = await listRecognitions(pageToLoad, sizeToLoad)
       setListItems(response.items.map(normalizeRequest))
       setListTotal(response.total)
       setTotalPages(Math.max(1, response.total_pages || 1))
       setNotice(null)
     } catch (error) {
-      if (mode === 'api') {
-        setMode('demo')
-        setNotice('Backend chưa phản hồi, đang chuyển sang demo data để bạn test giao diện.')
-        const start = (pageToLoad - 1) * sizeToLoad
-        setDemoItems(demoRequests)
-        const items = demoRequests.slice(start, start + sizeToLoad)
-        setListItems(items)
-        setListTotal(demoRequests.length)
-        setTotalPages(Math.max(1, Math.ceil(demoRequests.length / sizeToLoad)))
-      } else {
-        setNotice(error instanceof Error ? error.message : 'Không tải được danh sách')
-      }
+      setNotice(error instanceof Error ? error.message : 'Không tải được danh sách')
     } finally {
       setListLoading(false)
     }
@@ -883,12 +932,6 @@ export default function App() {
   const loadDetail = async (requestId: string) => {
     setDetailLoading(true)
     try {
-      if (mode === 'demo') {
-        const found = demoItems.find((item) => item.id === requestId) ?? null
-        setDetailItem(found)
-        return
-      }
-
       const item = normalizeRequest(await getRecognition(requestId))
       setDetailItem(item)
       setListItems((current) => current.map((row) => (row.id === item.id ? item : row)))
@@ -896,68 +939,18 @@ export default function App() {
     } catch (error) {
       if (error && typeof error === 'object' && 'status' in error && (error as { status?: number }).status === 404) {
         setDetailItem(null)
-      } else if (mode === 'api') {
-        setMode('demo')
-        setNotice('Backend chưa sẵn sàng, chi tiết đang mở bằng demo data.')
-        const found = demoItems.find((item) => item.id === requestId) ?? null
-        setDetailItem(found)
       } else {
-        setDetailItem(null)
+        setNotice(error instanceof Error ? error.message : 'Không tải được chi tiết')
       }
     } finally {
       setDetailLoading(false)
     }
   }
 
-  const queueDemoCompletion = (requestId: string) => {
-    window.setTimeout(() => {
-      const plate = `${Math.floor(10 + Math.random() * 89)}${'ABCDEFGHJK'.charAt(Math.floor(Math.random() * 10))}-${Math.floor(10000 + Math.random() * 90000)}`
-      const now = new Date().toISOString()
-      setDemoItems((current) =>
-        current.map((item) =>
-          item.id === requestId
-            ? {
-                ...item,
-                status: 'COMPLETED',
-                plate_number: plate,
-                confidence_score: 88,
-                detection_confidence: 92,
-                ocr_confidence: 86,
-                needs_review: false,
-                error_message: null,
-                bounding_box: { x: 40, y: 34, width: 32, height: 16 },
-                plate_region: 'BR',
-                updated_at: now,
-              }
-            : item,
-        ),
-      )
-      setDetailItem((current) =>
-        current && current.id === requestId
-          ? {
-              ...current,
-              status: 'COMPLETED',
-              plate_number: plate,
-              confidence_score: 88,
-              detection_confidence: 92,
-              ocr_confidence: 86,
-              needs_review: false,
-              error_message: null,
-              bounding_box: { x: 40, y: 34, width: 32, height: 16 },
-              plate_region: 'BR',
-              updated_at: now,
-            }
-          : current,
-      )
-      setRefreshToken((value) => value + 1)
-      applyToast('Nhận diện hoàn tất')
-    }, 2500)
-  }
-
   useEffect(() => {
     void loadList(page, pageSize)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, mode, refreshToken])
+  }, [page, pageSize, refreshToken])
 
   useEffect(() => {
     if (route.view !== 'detail') {
@@ -966,7 +959,7 @@ export default function App() {
     }
     void loadDetail(route.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.view, route.view === 'detail' ? route.id : '', mode, refreshToken])
+  }, [route.view, route.view === 'detail' ? route.id : '', refreshToken])
 
   useEffect(() => {
     const shouldPollList = listItems.some((item) => !terminal(item.status))
@@ -998,90 +991,19 @@ export default function App() {
   const handleUpload = async (payload: { file: File; previewUrl: string }) => {
     setUploadBusy(true)
     try {
-      if (mode === 'demo') {
-        const now = new Date().toISOString()
-        const item: UiRequest = {
-          id: `demo_${Math.random().toString(16).slice(2, 10)}`,
-          image_url: payload.previewUrl,
-          media_url: payload.previewUrl,
-          media_type: 'image',
-          thumbnail_url: payload.previewUrl,
-          plate_number: null,
-          status: 'PENDING',
-          error_message: null,
-          created_at: now,
-          updated_at: now,
-          confidence_score: null,
-          detection_confidence: null,
-          ocr_confidence: null,
-          needs_review: false,
-          bounding_box: null,
-          plate_region: null,
-        }
-        setDemoItems((current) => [item, ...current])
-        navigate({ view: 'detail', id: item.id })
-        setDetailItem(item)
-        setRefreshToken((value) => value + 1)
-        applyToast('Upload demo đã tạo request mới')
-        queueDemoCompletion(item.id)
-        return
-      }
-
-      try {
-        const response: RecognitionSubmitResponse = await uploadRecognition(payload.file)
-        navigate({ view: 'detail', id: response.request_id })
-        setRefreshToken((value) => value + 1)
-        applyToast('Upload thành công')
-      } catch (error) {
-        applyToast(error instanceof Error ? error.message : 'Upload thất bại', 'error')
-      }
+      await uploadRecognition(payload.file)
+      navigate({ view: 'home' })
+      setRefreshToken((value) => value + 1)
+      applyToast('Upload thành công')
+    } catch (error) {
+      applyToast(error instanceof Error ? error.message : 'Upload thất bại', 'error')
+      throw error
     } finally {
       setUploadBusy(false)
     }
   }
 
   const handleReprocess = async (requestId: string) => {
-    if (mode === 'demo') {
-      const updatedAt = new Date().toISOString()
-      setDemoItems((current) =>
-        current.map((item) =>
-          item.id === requestId
-            ? {
-                ...item,
-                status: 'PENDING',
-                error_message: null,
-                confidence_score: null,
-                detection_confidence: null,
-                ocr_confidence: null,
-                needs_review: false,
-                bounding_box: null,
-                plate_region: null,
-                updated_at: updatedAt,
-              }
-            : item,
-        ),
-      )
-      setDetailItem((current) => {
-        if (!current || current.id !== requestId) return current
-        return {
-          ...current,
-          status: 'PENDING',
-          error_message: null,
-          confidence_score: null,
-          detection_confidence: null,
-          ocr_confidence: null,
-          needs_review: false,
-          bounding_box: null,
-          plate_region: null,
-          updated_at,
-        }
-      })
-      setRefreshToken((value) => value + 1)
-      applyToast('Reprocessing started')
-      queueDemoCompletion(requestId)
-      return
-    }
-
     try {
       await reprocessRecognition(requestId)
       applyToast('Reprocessing started')
@@ -1095,7 +1017,7 @@ export default function App() {
 
   return (
     <AppShell>
-      <Header mode={mode} onRefresh={handleRefresh} onToggleTheme={handleThemeToggle} processingCount={processingCount} />
+      <Header onRefresh={handleRefresh} onToggleTheme={handleThemeToggle} processingCount={processingCount} />
 
       {notice && <NetworkBanner message={notice} />}
 

@@ -10,6 +10,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 
 from app.api.routes import router as recognition_router
+from app.logger import configure_logging
 from app.models.schemas import HealthResponse
 from app.shared.config import get_settings
 from app.shared.database import engine
@@ -18,16 +19,9 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def _configure_logging() -> None:
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _configure_logging()
+    configure_logging()
     upload_path = Path(settings.upload_dir)
     upload_path.mkdir(parents=True, exist_ok=True)
     logger.info("Application startup complete; upload_dir=%s", upload_path)

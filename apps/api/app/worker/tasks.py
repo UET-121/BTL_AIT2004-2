@@ -42,57 +42,95 @@ def process_plate_recognition(self, request_id: str) -> dict:
         record.status = RecognitionStatus.PENDING
         record.updated_at = datetime.now(timezone.utc)
         session.flush()
-        image_path = _resolve_image_path(record.image_url)
+        image_url = record.image_url
+
+    import tempfile
+    import os
+
+    local_path = None
+    temp_path = None
 
     try:
-        service = RecognitionService()
-        result = service.recognize(image_path)
+        try:
+            if settings.storage_type == "minio":
+                from app.services.storage import get_storage_service
+                storage = get_storage_service(settings)
+                ext = os.path.splitext(image_url)[1]
+                temp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+                temp_path = temp_file.name
+                temp_file.close()
 
-        with get_sync_session() as session:
-            record = session.get(RecognitionRequest, UUID(request_id))
-            if record is None:
-                return {"error": "not_found"}
+                logger.info("Downloading file %s from MinIO to %s", image_url, temp_path)
+                storage.download_sync(image_url, temp_path)
+                local_path = temp_path
+            else:
+                local_path = _resolve_image_path(image_url)
 
-            final_status = map_result_to_status(result, settings)
-            record.plate_number = result.plate_text
-            record.confidence_score = result.confidence_score
-            record.detection_confidence = result.detection_confidence
-            record.ocr_confidence = result.ocr_confidence
-            record.needs_review = result.needs_review
-            record.bounding_box = (
-                {
-                    "x": result.bounding_box.x,
-                    "y": result.bounding_box.y,
-                    "width": result.bounding_box.width,
-                    "height": result.bounding_box.height,
-                }
-                if result.bounding_box
-                else None
-            )
-            record.plate_region = result.plate_region
-            record.metadata_json = result.metadata
-            record.status = final_status
-            record.error_message = result.error_message
-            record.updated_at = datetime.now(timezone.utc)
+            service = RecognitionService()
 
-            logger.info(
-                "Request %s finished: status=%s plate=%s confidence=%.3f",
-                request_id,
-                final_status.value,
-                result.plate_text,
-                result.confidence_score or 0,
-            )
-            return {"status": final_status.value, "plate_number": result.plate_text}
+            ext = os.path.splitext(image_url)[1].lower().lstrip(".")
+            is_video = ext in {"mp4", "avi", "mov", "mpeg", "mkv"}
 
-    except Exception as exc:
-        logger.exception("Recognition failed for %s", request_id)
-        with get_sync_session() as session:
-            record = session.get(RecognitionRequest, UUID(request_id))
-            if record:
-                record.status = RecognitionStatus.FAILED
-                record.error_message = str(exc)
+            if is_video:
+                logger.info("Processing as video file: %s", local_path)
+                result = service.recognize_video(local_path)
+            else:
+                logger.info("Processing as image file: %s", local_path)
+                result = service.recognize(local_path)
+
+            with get_sync_session() as session:
+                record = session.get(RecognitionRequest, UUID(request_id))
+                if record is None:
+                    return {"error": "not_found"}
+
+                final_status = map_result_to_status(result, settings)
+                record.plate_number = result.plate_text
+                record.confidence_score = result.confidence_score
+                record.detection_confidence = result.detection_confidence
+                record.ocr_confidence = result.ocr_confidence
+                record.needs_review = result.needs_review
+                record.bounding_box = (
+                    {
+                        "x": result.bounding_box.x,
+                        "y": result.bounding_box.y,
+                        "width": result.bounding_box.width,
+                        "height": result.bounding_box.height,
+                    }
+                    if result.bounding_box
+                    else None
+                )
+                record.plate_region = result.plate_region
+                record.metadata_json = result.metadata
+                record.status = final_status
+                record.error_message = result.error_message
                 record.updated_at = datetime.now(timezone.utc)
 
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc)
-        return {"status": "FAILED", "error": str(exc)}
+                logger.info(
+                    "Request %s finished: status=%s plate=%s confidence=%.3f",
+                    request_id,
+                    final_status.value,
+                    result.plate_text,
+                    result.confidence_score or 0,
+                )
+                return {"status": final_status.value, "plate_number": result.plate_text}
+
+        except Exception as exc:
+            logger.exception("Recognition failed for %s", request_id)
+            with get_sync_session() as session:
+                record = session.get(RecognitionRequest, UUID(request_id))
+                if record:
+                    record.status = RecognitionStatus.FAILED
+                    record.error_message = str(exc)
+                    record.updated_at = datetime.now(timezone.utc)
+
+            if self.request.retries < self.max_retries:
+                raise self.retry(exc=exc)
+            return {"status": "FAILED", "error": str(exc)}
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+                logger.info("Cleaned up temporary file %s", temp_path)
+            except Exception as e:
+                logger.warning("Failed to delete temp file %s: %s", temp_path, e)
+

@@ -26,6 +26,12 @@ class Settings(BaseSettings):
         default="local", alias="STORAGE_TYPE"
     )
     upload_dir: str = Field(default="uploads", alias="UPLOAD_DIR")
+    minio_url: str = Field(default="http://localhost:9000", alias="MINIO_URL")
+    minio_public_url: str = Field(default="http://localhost:9000", alias="MINIO_PUBLIC_URL")
+    minio_access_key: str = Field(default="minioadmin", alias="MINIO_ACCESS_KEY")
+    minio_secret_key: str = Field(default="minioadmin", alias="MINIO_SECRET_KEY")
+    minio_bucket: str = Field(default="uploads", alias="MINIO_BUCKET")
+
 
     # CORS
     cors_origins: list[str] = Field(

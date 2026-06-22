@@ -1,8 +1,11 @@
 import logging
+import io
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from minio import Minio
 from app.shared.config import Settings, get_settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,20 +61,77 @@ class LocalStorage(StorageService):
 
 
 class MinioStorage(StorageService):
-    """MinIO storage — stretch goal; raises until configured."""
+    """MinIO storage service."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        raise NotImplementedError("MinIO storage not yet configured. Use STORAGE_TYPE=local.")
+        # Parse host/port and secure protocol from url
+        endpoint_url = settings.minio_url.rstrip("/")
+        url = endpoint_url.replace("http://", "").replace("https://", "")
+        secure = endpoint_url.startswith("https://")
+        
+        self.client = Minio(
+            endpoint=url,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            secure=secure,
+        )
+        self.bucket = settings.minio_bucket
+        self._ensure_bucket_exists()
+
+    def _ensure_bucket_exists(self) -> None:
+        try:
+            if not self.client.bucket_exists(self.bucket):
+                self.client.make_bucket(self.bucket)
+                logger.info("Created MinIO bucket: %s", self.bucket)
+        except Exception as e:
+            logger.exception("Failed to verify/create MinIO bucket %s: %s", self.bucket, e)
+
+    def save_sync(self, filename: str, content: bytes) -> str:
+        data = io.BytesIO(content)
+        self.client.put_object(
+            bucket_name=self.bucket,
+            object_name=filename,
+            data=data,
+            length=len(content),
+        )
+        return filename
+
+    def get_url_sync(self, filename: str) -> str:
+        from datetime import timedelta
+        url = self.client.presigned_get_object(
+            bucket_name=self.bucket,
+            object_name=filename,
+            expires=timedelta(days=7),
+        )
+        # Rewrite internal docker minio url to public endpoint if different
+        internal_base = self._settings.minio_url.rstrip("/")
+        public_base = self._settings.minio_public_url.rstrip("/")
+        if internal_base != public_base:
+            url = url.replace(internal_base, public_base)
+        return url
+
+    def delete_sync(self, filename: str) -> None:
+        self.client.remove_object(self.bucket, filename)
+
+    def download_sync(self, filename: str, target_path: str) -> None:
+        self.client.fget_object(self.bucket, filename, target_path)
 
     async def save(self, filename: str, content: bytes) -> str:
-        raise NotImplementedError
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.save_sync, filename, content)
 
     async def get_url(self, filename: str) -> str:
-        raise NotImplementedError
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.get_url_sync, filename)
 
     async def delete(self, filename: str) -> None:
-        raise NotImplementedError
+        import asyncio
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.delete_sync, filename)
+
 
 
 def get_storage_service(settings: Settings | None = None) -> StorageService:

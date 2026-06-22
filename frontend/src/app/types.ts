@@ -59,7 +59,7 @@ export interface RequestMeta {
 
 export type UiRequest = RecognitionRequest &
   RequestMeta & {
-    media_type: 'image'
+    media_type: 'image' | 'video'
     media_url: string
     thumbnail_url?: string
     display_name?: string
