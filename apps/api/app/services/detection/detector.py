@@ -32,3 +32,16 @@ class PlateDetector(ABC):
     @abstractmethod
     def detect(self, image: np.ndarray) -> list[BoundingBox]:
         """Return detected plate bounding boxes sorted by confidence descending."""
+
+    @abstractmethod
+    def detect_vehicles_and_plates(self, image: np.ndarray) -> list[dict]:
+        """Detects both vehicles and license plates.
+        Returns a list of dicts:
+        {
+            "vehicle_bbox": BoundingBox,
+            "plate_bbox": BoundingBox,
+            "vehicle_conf": float,
+            "plate_conf": float,
+            "class_name": str
+        }
+        """

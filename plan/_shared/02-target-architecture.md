@@ -4,43 +4,35 @@
 
 ```mermaid
 flowchart TB
-    subgraph client [Frontend apps/web]
+    subgraph client [Frontend]
         UI[React SPA]
-        Crop[Cropper]
-    end
-
-    subgraph gateway [nginx port 80]
-        Proxy[API Proxy]
+        WS[WebSocket Client]
     end
 
     subgraph backend [Backend apps/api]
         API[FastAPI :8000]
-        Worker[Celery Worker]
-        Recog[RecognitionService]
+        Recog[Inference Service]
+        Stream[Stream Manager]
     end
 
     subgraph ml [AI Pipeline]
-        Detect[Plate Detector]
+        Detect[YOLOv8 ONNX Plate/Vehicle]
         Pre[Preprocessing]
         OCR[EasyOCR]
-        Val[BR Validator]
     end
 
     subgraph infra [Docker Compose]
         PG[(PostgreSQL)]
-        Redis[(Redis)]
-        Vol[uploads volume]
+        MinIO[(MinIO Storage)]
     end
 
-    UI --> Crop --> Proxy --> API
-    Proxy --> API
+    UI --> API
+    WS <-->|ws/live| API
     API --> PG
-    API --> Redis
-    API --> Vol
-    Redis --> Worker
-    Worker --> Recog
-    Recog --> Detect --> Pre --> OCR --> Val
-    Worker --> PG
+    API --> MinIO
+    API --> Stream
+    Stream --> Recog
+    Recog --> Detect --> Pre --> OCR
 ```
 
 ## Monorepo Layout (Target)
@@ -48,40 +40,28 @@ flowchart TB
 ```
 license-plate-recognition/
 ├── apps/
-│   ├── api/                    # FastAPI + Celery + ML services
-│   │   ├── app/
-│   │   │   ├── main.py
-│   │   │   ├── api/routes.py
-│   │   │   ├── models/
-│   │   │   ├── services/
-│   │   │   │   ├── detection/
-│   │   │   │   ├── ocr/
-│   │   │   │   ├── preprocessing/
-│   │   │   │   ├── validation/
-│   │   │   │   ├── recognition.py
-│   │   │   │   └── storage.py
-│   │   │   ├── worker/
-│   │   │   └── shared/
-│   │   ├── migrations/
-│   │   ├── Dockerfile
-│   │   ├── Makefile
-│   │   ├── requirements.txt
-│   │   └── .env.example
-│   └── web/                    # React/Vite SPA
-│       ├── src/
+│   └── api/                    # FastAPI + ML services
+│       ├── app/
+│       │   ├── main.py
+│       │   ├── api/routes.py
+│       │   ├── models/
+│       │   ├── realtime/       # WebSockets & Stream management
+│       │   ├── services/       # Storage Service
+│       │   └── shared/         # Database, Config, Logger
+│       ├── migrations/
 │       ├── Dockerfile
-│       └── nginx.conf
-├── models/                     # DVC-tracked weights
-│   ├── detection/
-│   ├── onnx/
-│   └── release/
-├── datasets/                   # Training/eval data (gitignored raw)
-├── notebooks/                  # ML exploration
+│       ├── Makefile
+│       ├── requirements.txt
+│       └── .env.example
+├── frontend/                   # React/Vite SPA
+│   ├── src/
+│   ├── Dockerfile
+│   └── index.html
+├── models/                     # Model weights
+│   └── onnx/                   # yolov8-plate-v1.onnx, yolov8n.onnx
 ├── scripts/                    # CI, smoke test, backup
 ├── plan/                       # Agile redesign docs (this folder)
-├── data/                       # Docker volumes (gitignored)
 ├── docker-compose.yml
-├── docker-compose.dev.yml
 ├── Makefile                    # Root wrapper
 └── .env.example
 ```
@@ -93,53 +73,36 @@ sequenceDiagram
     participant User
     participant Web as Frontend
     participant API as FastAPI
-    participant Redis
-    participant Worker as Celery Worker
-    participant ML as RecognitionService
+    participant Stream as Stream Manager
     participant DB as PostgreSQL
+    participant MinIO as MinIO Storage
 
-    User->>Web: Upload image (optional crop)
+    User->>Web: Upload video
     Web->>API: POST /api/v1/recognition
-    API->>DB: INSERT status=NOT_STARTED
-    API->>Redis: enqueue task
+    API->>MinIO: upload video
+    API->>DB: INSERT status=PENDING
+    API->>Stream: start_stream(local_video_path)
     API-->>Web: 200 {request_id, status}
 
-    Redis->>Worker: process_plate_recognition
-    Worker->>DB: UPDATE status=PENDING
-    Worker->>ML: recognize(image_path)
-
-    ML->>ML: Detect plate region
-    ML->>ML: Preprocess (quality/deblur/enhance)
-    ML->>ML: EasyOCR
-    ML->>ML: BR format validation
-    ML->>ML: Confidence scoring
-
-    alt confidence >= AUTO_ACCEPT
-        Worker->>DB: status=COMPLETED
-    else confidence < NEEDS_REVIEW
-        Worker->>DB: status=NEEDS_REVIEW
-    else all retries failed
-        Worker->>DB: status=FAILED
+    loop Real-time Processing
+        Stream->>Stream: Read frame
+        Stream->>Stream: Detect vehicles & plates (YOLOv8 ONNX)
+        Stream->>Stream: Run OCR (EasyOCR)
+        Stream->>Web: Broadcast frame detection results via WS (/ws/live)
+        Stream->>DB: Save/update recognition logs
     end
-
-    Web->>API: GET /api/v1/recognition/{id} (poll)
-    API-->>Web: Full response + metadata
 ```
 
 ## Component Responsibilities
 
 | Component | Owner | Responsibility |
 |-----------|-------|----------------|
-| `apps/web` | Frontend | Upload UI, crop, list, detail, polling, review UX |
-| `apps/api/app/api` | Backend | REST endpoints, validation, error handling |
-| `apps/api/app/worker` | Backend | Celery tasks, status lifecycle |
-| `apps/api/app/services/recognition.py` | Backend + AI | Orchestrate ML pipeline |
-| `apps/api/app/services/detection/` | AI | YOLO / ONNX plate detection |
-| `apps/api/app/services/ocr/` | AI | EasyOCR integration |
-| `apps/api/app/services/preprocessing/` | AI | Image enhancement pipeline |
-| `apps/api/app/services/validation/` | AI | Brazilian plate rules |
-| `docker-compose.yml` | DevOps | Service orchestration |
-| `models/` | AI + DevOps | Versioned weights via DVC |
+| `frontend` | Frontend | Upload UI, stream display, logs, WebSockets, review UX |
+| `apps/api/app/api` | Backend | REST endpoints, WebSocket connections, validation |
+| `apps/api/app/realtime` | Backend | Stream management, inference scheduling, broadcasting |
+| `apps/api/app/services/` | Backend | MinIO / local storage integration |
+| `apps/api/app/shared/` | Backend | DB context, configuration, logging |
+| `docker-compose.yml` | DevOps | PostgreSQL, MinIO, API, Frontend orchestration |
 
 ## Data Model (Target)
 
@@ -167,28 +130,29 @@ Full contract: [`05-api-contracts.md`](05-api-contracts.md)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Health check (+ extended deps in Sprint 2) |
-| POST | `/api/v1/recognition` | Upload image, queue task |
-| GET | `/api/v1/recognition/{id}` | Get request detail |
-| GET | `/api/v1/recognition` | Paginated list |
-| POST | `/api/v1/recognition/{id}/reprocess` | Re-queue FAILED/NEEDS_REVIEW |
-| GET | `/uploads/{filename}` | Static image serve |
+| POST | `/api/v1/recognition` | Upload video, lưu trữ và kích hoạt stream processing |
+| GET | `/api/v1/recognition/{id}` | Lấy chi tiết kết quả nhận diện |
+| GET | `/api/v1/recognition` | Danh sách lịch sử nhận diện (phân trang) |
+| DELETE | `/api/v1/recognition/{id}` | Xóa bản ghi lịch sử và file tương ứng |
+| POST | `/api/v1/streams/start` | Bắt đầu một luồng xử lý video realtime |
+| POST | `/api/v1/streams/stop` | Dừng luồng xử lý realtime |
+| GET | `/api/v1/streams/status` | Lấy trạng thái luồng realtime hiện tại |
+| WS | `/ws/live` | Kết nối WebSocket nhận frame realtime từ backend |
 
 ## Environment Profiles
 
 | Profile | Command | Use case |
 |---------|---------|----------|
-| `infra-only` | `docker compose up db redis` | Local dev, API/worker chạy ngoài container |
-| `dev` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` | Hot reload |
-| `prod-like` | `docker compose --profile prod up` | Pre-release validation |
+| `full-stack` | `docker compose up -d` | Chạy toàn bộ hệ thống (db, minio, api, frontend) |
+| `infra-only` | `docker compose up -d db minio` | Chạy hạ tầng để debug API & Frontend cục bộ bên ngoài |
 
 ## Integration Points (Cross-team)
 
 | Interface | Producer | Consumer | Contract |
 |-----------|----------|----------|----------|
-| REST API | Backend | Frontend | OpenAPI `/docs` |
-| ML output schema | AI | Backend | JSON spec in Sprint 3 AI |
-| Model artifacts | AI | DevOps | `models/release/v1.0/` |
+| REST API & WS | Backend | Frontend | OpenAPI `/docs` & WebSocket events |
+| ML output schema | AI | Backend | JSON result per frame |
+| Model weights | AI | Backend | `models/onnx/*.onnx` |
 | Env variables | DevOps | All | [`06-env-variables.md`](06-env-variables.md) |
 | Docker services | DevOps | All | `docker-compose.yml` healthchecks |
 
@@ -196,9 +160,9 @@ Full contract: [`05-api-contracts.md`](05-api-contracts.md)
 
 | NFR | Target |
 |-----|--------|
-| Availability (local) | 5 services healthy after `docker compose up` |
-| Latency p95 | Upload → COMPLETED < 30s |
-| Scalability (local) | 10 concurrent uploads (locust spike) |
-| Observability | Structured JSON logs, request ID propagation |
-| Security (local) | No secrets in git, `.env` gitignored |
-| Maintainability | Pre-commit hooks, CI script, ≥ 70% backend coverage |
+| Availability (local) | 4 services (db, minio, api, frontend) khởi động healthy dưới 3 phút |
+| Latency p95 | Xử lý frame video AI dưới 150ms/frame |
+| WebSockets | Hỗ trợ phát frame realtime mượt mà lên giao diện |
+| Observability | Log có cấu trúc trên API console |
+| Security (local) | Thông tin nhạy cảm cấu hình qua file `.env` không commit |
+| Maintainability | Code sạch, cấu trúc rõ ràng, hỗ trợ migrate DB qua Alembic |

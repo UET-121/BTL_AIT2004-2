@@ -15,23 +15,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD}
-    ports:
-      - "6380:6379"
-    healthcheck:
-      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping" ]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  redisinsight:
-    image: redis/redisinsight:latest
-    ports:
-      - "5540:5540"
-    depends_on:
-      - redis
   api:
     build:
       context: ./apps/api
@@ -39,15 +22,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       minio:
         condition: service_started
     ports:
       - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/plate_recognition}
-      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}
       UPLOAD_DIR: /app/uploads
       STORAGE_TYPE: ${STORAGE_TYPE:-minio}
       MINIO_URL: ${MINIO_URL:-http://minio:9000}
@@ -58,6 +40,15 @@ services:
       CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
       PLATE_DETECTION_MODEL: ${PLATE_DETECTION_MODEL:-license_plate_detector.pt}
       DEFAULT_PLATE_REGION: ${DEFAULT_PLATE_REGION:-GB}
+      OCR_GPU: "true"
+      USE_ONNX_INFERENCE: "true"
+      ONNX_MODEL_PATH: "models/onnx/yolov8-plate-v1.onnx"
+      # Reduce PyTorch/MKL thread context-switching overhead inside Docker CPU
+      OMP_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      VECLIB_MAXIMUM_THREADS: 1
+      NUMEXPR_NUM_THREADS: 1
   minio:
     image: minio/minio:latest
     ports:

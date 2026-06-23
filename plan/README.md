@@ -94,9 +94,9 @@ Tài liệu Agile redesign cho dự án **License Plate Recognition** — 12 tu�
 ```
 Sprint 0  [2026-06-23 ─ 2026-07-06]  Foundation
 Sprint 1  [2026-07-07 ─ 2026-07-20]  Core Features
-Sprint 2  [2026-07-21 ─ 2026-08-03]  Async & Storage
-Sprint 3  [2026-08-04 ─ 2026-08-17]  ML Integration
-Sprint 4  [2026-08-18 ─ 2026-08-31]  Quality & ONNX
+Sprint 2  [2026-07-21 ─ 2026-08-03]  Storage & Real-time (MinIO)
+Sprint 3  [2026-08-04 ─ 2026-08-17]  ML Integration (YOLO & OCR)
+Sprint 4  [2026-08-18 ─ 2026-08-31]  Quality & ONNX Runtime
 Sprint 5  [2026-09-01 ─ 2026-09-14]  Hardening
 Sprint 6  [2026-09-15 ─ 2026-09-28]  Release v1.0
 ```
@@ -134,10 +134,10 @@ Chi tiết milestones: [`04-sprint-calendar.md`](_shared/04-sprint-calendar.md)
 
 | Plan area | Reuse | Rebuild/improve |
 |-----------|-------|-----------------|
-| Backend API | routes, models, worker | alembic.ini, tests, MinIO |
-| AI pipeline | preprocessing, validation, EasyOCR | Plate YOLO, ONNX inference |
-| Frontend | Upload, crop, list, detail | Confidence UI, NEEDS_REVIEW, bbox |
-| DevOps | docker-compose db/redis, Dockerfiles | Full stack, CI, observability |
+| Backend API | routes, models, config | alembic.ini, tests, MinIO integration |
+| AI pipeline | preprocessing, validation, EasyOCR | Plate YOLO, ONNX inference, Stream processing |
+| Frontend | Upload, stream display, logs | Confidence UI, NEEDS_REVIEW, bbox, WebSockets |
+| DevOps | docker-compose db/minio, Dockerfiles | Full stack compose, CI, resource limit |
 
 ---
 

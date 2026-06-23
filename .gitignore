@@ -16,6 +16,9 @@ apps/*/.env
 uploads/
 data/
 *.db
+*.mp4
+*.avi
+*.mkv
 
 # ML models (DVC tracked)
 models/detection/*.pt

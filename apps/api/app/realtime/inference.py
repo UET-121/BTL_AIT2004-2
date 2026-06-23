@@ -46,25 +46,6 @@ def run_async(coro, loop: asyncio.AbstractEventLoop | None) -> None:
 async def save_confirmed_request(plate_text: str, confidence: float, bbox: any, frame: np.ndarray, vehicle_conf: float = 1.0) -> None:
     """Asynchronously saves a confirmed plate recognition to storage and the PostgreSQL database."""
     try:
-        # Convert frame to bytes
-        success, buffer = cv2.imencode('.jpg', frame)
-        if not success:
-            logger.error("Failed to encode frame for database save")
-            return
-        
-        # Save frame to storage service
-        storage = get_storage_service()
-        filename = f"realtime_{uuid.uuid4()}.jpg"
-        image_url = await storage.save(filename, buffer.tobytes())
-
-        # Map bbox to dict format
-        bbox_dict = {
-            "x": int(bbox.x),
-            "y": int(bbox.y),
-            "width": int(bbox.width),
-            "height": int(bbox.height),
-        }
-
         # Try to extract parent request ID from the source path
         parent_id = None
         source_str = shared_state.source
@@ -77,6 +58,28 @@ async def save_confirmed_request(plate_text: str, confidence: float, bbox: any, 
                 parent_id = stem
             except ValueError:
                 pass
+
+        logger.info("save_confirmed_request: Starting save for plate_text=%r, parent_id=%s", plate_text, parent_id)
+
+        # Convert frame to bytes
+        success, buffer = cv2.imencode('.jpg', frame)
+        if not success:
+            logger.error("save_confirmed_request: Failed to encode frame for database save")
+            return
+        
+        # Save frame to storage service
+        storage = get_storage_service()
+        filename = f"realtime_{uuid.uuid4()}.jpg"
+        image_url = await storage.save(filename, buffer.tobytes())
+        logger.info("save_confirmed_request: Frame uploaded successfully. URL=%s", image_url)
+
+        # Map bbox to dict format
+        bbox_dict = {
+            "x": int(bbox.x),
+            "y": int(bbox.y),
+            "width": int(bbox.width),
+            "height": int(bbox.height),
+        }
 
         # Create metadata_json
         meta = {"source": "realtime_stream"}
@@ -98,10 +101,11 @@ async def save_confirmed_request(plate_text: str, confidence: float, bbox: any, 
             metadata_json=meta
         )
 
+        logger.info("save_confirmed_request: Adding record to database session...")
         async with async_session_factory() as session:
             session.add(record)
             await session.commit()
-            logger.info("Saved realtime confirmed plate %s to database.", plate_text)
+            logger.info("Saved realtime confirmed plate %s to database successfully.", plate_text)
     except Exception as exc:
         logger.exception("Failed to save confirmed request to database: %s", exc)
 
@@ -152,6 +156,10 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
 
         # 1. Run detection for both vehicles and plates
         detections = detector.detect_vehicles_and_plates(frame)
+        if detections:
+            real_dets = [d for d in detections if getattr(d.get("vehicle_bbox"), "class_name", "") != "full_image"]
+            logger.info("Frame %d: detected %d objects (%d real vehicles/plates)", 
+                        frame_id, len(detections), len(real_dets))
 
         # 2. Update tracker
         tracker.update(detections, frame_id)
@@ -173,12 +181,17 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
                 
                 # Preprocess and run OCR
                 preprocessed = preprocessor.run(crop)
+                
+                logger.info("Track %d (attempt %d): Running OCR...", track_id, track.ocr_attempts)
                 ocr_result = ocr.read(preprocessed.image)
+                logger.info("Track %d: OCR read text=%r, conf=%.2f", track_id, ocr_result.text, ocr_result.confidence)
 
                 if ocr_result.text:
                     status, consensus_text, confidence = temporal_validator.add_candidate(
                         track, ocr_result.text, ocr_result.confidence
                     )
+                    logger.info("Track %d: TemporalValidator add_candidate -> status=%s, consensus=%r, consensus_conf=%.2f", 
+                                track_id, status, consensus_text, confidence)
 
                     # Trigger events based on state transitions
                     if status == "confirmed" and not track.is_confirmed:
@@ -203,6 +216,7 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
                                 "height": int(plate_bbox.height)
                             }
                         }
+                        logger.info("Track %d: Broadcasting plate.confirmed event and saving to DB...", track_id)
                         run_async(broadcaster.broadcast(event_payload), loop)
                         # Save to database
                         run_async(
@@ -293,7 +307,9 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
                         "image_base64": image_base64,
                         "fps": round(fps, 1),
                         "data": {
-                            "detections": active_detections
+                            "detections": active_detections,
+                            "current_vehicles": len(active_detections),
+                            "total_vehicles": tracker.next_track_id - 1
                         }
                     }
                     run_async(broadcaster.broadcast(frame_event), loop)
@@ -345,6 +361,29 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
         }
     }
     run_async(broadcaster.broadcast(event_payload), loop)
+
+    # Clean up the local video file if it was a streamed upload
+    if source_str and isinstance(source_str, str):
+        # Allow the capture thread a moment to completely exit and release file handles
+        time.sleep(0.5)
+        try:
+            from pathlib import Path
+            video_path = Path(source_str)
+            if video_path.is_file():
+                # Avoid deleting files outside the upload directory for security
+                from app.shared.config import get_settings
+                settings = get_settings()
+                upload_dir_abs = Path(settings.upload_dir).resolve()
+                video_path_abs = video_path.resolve()
+                
+                # Check if it's inside the upload directory
+                if upload_dir_abs in video_path_abs.parents:
+                    video_path.unlink(missing_ok=True)
+                    logger.info("Cleaned up local video file: %s", video_path)
+                else:
+                    logger.warning("Prevented deletion of file outside uploads directory: %s", video_path)
+        except Exception as clean_exc:
+            logger.warning("Failed to clean up local video file %s: %s", source_str, clean_exc)
 
     logger.info("Inference loop thread stopped.")
 

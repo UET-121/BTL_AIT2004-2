@@ -5,6 +5,14 @@ import cv2
 import numpy as np
 import torch
 
+# Monkeypatch torch.load to default weights_only=False for backward compatibility with PyTorch 2.6+ and Ultralytics
+_original_torch_load = torch.load
+def _patched_torch_load(*args, **kwargs):
+    if "weights_only" not in kwargs:
+        kwargs["weights_only"] = False
+    return _original_torch_load(*args, **kwargs)
+torch.load = _patched_torch_load
+
 from ultralytics import YOLO
 from app.services.detection.detector import BoundingBox, PlateDetector
 from app.shared.config import Settings, get_settings
@@ -37,6 +45,19 @@ class YoloPlateDetector(PlateDetector):
             logger.error("Failed to load YOLO model: %s", exc)
             self._model = None
 
+    def _run_yolo_inference(self, model: YOLO, image: np.ndarray, imgsz: int = 640) -> list:
+        """Runs YOLO model inference, falling back to CPU if CUDA fails."""
+        try:
+            return model(image, verbose=False, device=self.device, imgsz=imgsz)
+        except Exception as exc:
+            if self.device == "cuda":
+                logger.warning("YOLO inference failed on CUDA: %s. Falling back to CPU...", exc)
+                self.device = "cpu"
+                fallback_imgsz = 320 if imgsz == 640 else imgsz
+                return model(image, verbose=False, device="cpu", imgsz=fallback_imgsz)
+            else:
+                logger.error("YOLO inference failed on device %s: %s", self.device, exc)
+                raise exc
 
     def detect(self, image: np.ndarray) -> list[BoundingBox]:
         if not self.settings.use_plate_detection:
@@ -91,7 +112,7 @@ class YoloPlateDetector(PlateDetector):
 
         if vehicle_model is not None:
             imgsz = 320 if self.device == "cpu" else 640
-            results = vehicle_model(image, verbose=False, device=self.device, imgsz=imgsz)
+            results = self._run_yolo_inference(vehicle_model, image, imgsz=imgsz)
             for result in results:
                 if result.boxes is None:
                     continue
@@ -113,7 +134,7 @@ class YoloPlateDetector(PlateDetector):
 
         is_custom_plate_model = self.settings.plate_detection_model != "yolov8n.pt"
         if is_custom_plate_model and self._model is not None:
-            results = self._model(image, verbose=False, device=self.device, imgsz=640)
+            results = self._run_yolo_inference(self._model, image, imgsz=640)
             for result in results:
                 if result.boxes is None:
                     continue
@@ -219,7 +240,7 @@ class YoloPlateDetector(PlateDetector):
 
     def _tier1_plate_detection(self, image: np.ndarray) -> list[BoundingBox]:
         assert self._model is not None
-        results = self._model(image, verbose=False, device=self.device, imgsz=640)
+        results = self._run_yolo_inference(self._model, image, imgsz=640)
         boxes: list[BoundingBox] = []
         h, w = image.shape[:2]
 
@@ -253,7 +274,7 @@ class YoloPlateDetector(PlateDetector):
     def _tier2_vehicle_detection(self, image: np.ndarray) -> list[BoundingBox]:
         assert self._model is not None
         imgsz = 320 if self.device == "cpu" else 640
-        results = self._model(image, verbose=False, device=self.device, imgsz=imgsz)
+        results = self._run_yolo_inference(self._model, image, imgsz=imgsz)
         boxes: list[BoundingBox] = []
         h, w = image.shape[:2]
 

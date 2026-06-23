@@ -3,8 +3,6 @@ uvicorn[standard]>=0.22.0
 sqlalchemy>=2.0
 asyncpg>=0.27
 alembic>=1.11
-redis>=4.6
-celery>=5.3
 pydantic>=2.0
 pydantic-settings>=0.1
 python-multipart>=0.0.6
@@ -15,4 +13,7 @@ easyocr
 ultralytics
 minio>=7.2.0
 psycopg2-binary>=2.9.0
+# GPU/CUDA and CPU unified dependencies (automatically uses GPU if CUDA is available, otherwise falls back to CPU)
+onnx
+onnxruntime-gpu
 

@@ -30,40 +30,27 @@ Nhánh DevOps chịu trách nhiệm infrastructure, Docker Compose, CI/CD local,
 
 ```bash
 # 1. Start infrastructure
-make docker-up          # hoặc: docker compose up -d db redis
+docker compose up -d db minio
 
-# 2. Pull models (khi cần)
-make models             # dvc pull
+# 2. Run migrations
+cd apps/api && alembic upgrade head
 
-# 3. Run migrations
-cd apps/api && make migrate
+# 3. Start app hoặc full docker compose
+docker compose up -d
 
-# 4. Start app (2 terminals) hoặc full docker
-make api                # terminal 1
-make worker             # terminal 2
-# hoặc
-docker compose up -d    # all services
-
-# 5. Frontend dev
-cd apps/web && pnpm dev
-
-# 6. Smoke test
-./scripts/smoke-test.sh
+# 4. Frontend dev (ngoài container nếu muốn debug)
+cd frontend && npm run dev
 ```
 
 ## Key Files (Target State)
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Production-like stack |
-| `docker-compose.dev.yml` | Hot reload overlay |
-| `docker-compose.override.yml.example` | Local mount template |
-| `Makefile` (root) | Wrapper commands |
-| `scripts/wait-for-it.sh` | Wait for healthy deps |
-| `scripts/smoke-test.sh` | End-to-end smoke |
-| `scripts/ci.sh` | Local CI pipeline |
-| `scripts/backup-db.sh` | PostgreSQL backup |
-| `.pre-commit-config.yaml` | Lint hooks |
+| `docker-compose.yml` | Full stack compose configuration |
+| `.env.example` | Template for system environment variables |
+| `apps/api/Dockerfile` | Backend production container image |
+| `frontend/Dockerfile` | Frontend production container image |
+| `apps/api/migrations/` | Alembic DB migrations |
 
 ## RACI
 
@@ -72,8 +59,8 @@ cd apps/web && pnpm dev
 | Docker Compose full stack | **R/A** | C | C | C |
 | `.env.example` master | **A** | C | C | C |
 | CI/pre-commit | **R/A** | I | C | C |
-| Model artifact storage | **R** | **A** | I | I |
-| nginx config | **R** | I | C | C |
+| Model weights directory | **R** | **A** | I | I |
+| WebSocket & network routing | **R** | I | C | C |
 
 ## Related Docs
 

@@ -21,12 +21,29 @@ def _get_reader(settings: Settings):
         gpu_available = torch.cuda.is_available()
         gpu_flag = settings.ocr_gpu or gpu_available
 
-        _reader_instance = easyocr.Reader(
-            ["en"],
-            gpu=gpu_flag,
-            verbose=False,
-        )
-        logger.info("EasyOCR reader initialized (gpu=%s, config_setting=%s)", gpu_flag, settings.ocr_gpu)
+        try:
+            _reader_instance = easyocr.Reader(
+                ["en"],
+                gpu=gpu_flag,
+                verbose=False,
+            )
+            logger.info("EasyOCR reader initialized (gpu=%s, config_setting=%s)", gpu_flag, settings.ocr_gpu)
+        except Exception as exc:
+            if gpu_flag:
+                logger.warning("Failed to initialize EasyOCR with GPU: %s. Falling back to CPU...", exc)
+                try:
+                    _reader_instance = easyocr.Reader(
+                        ["en"],
+                        gpu=False,
+                        verbose=False,
+                    )
+                    logger.info("EasyOCR reader initialized successfully on CPU")
+                except Exception as fallback_exc:
+                    logger.error("Failed to initialize EasyOCR even on CPU: %s", fallback_exc)
+                    raise fallback_exc
+            else:
+                logger.error("Failed to initialize EasyOCR: %s", exc)
+                raise exc
     return _reader_instance
 
 

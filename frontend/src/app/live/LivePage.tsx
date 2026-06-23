@@ -61,6 +61,8 @@ export default function LivePage() {
   const [fps, setFps] = useState<number>(0)
   const [vehicleAcc, setVehicleAcc] = useState<number>(0)
   const [plateAcc, setPlateAcc] = useState<number>(0)
+  const [currentVehicles, setCurrentVehicles] = useState<number>(0)
+  const [totalVehicles, setTotalVehicles] = useState<number>(0)
 
   const [loading, setLoading] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -100,6 +102,14 @@ export default function LivePage() {
               setImageBase64(event.image_base64)
               if (event.fps !== undefined) {
                 setFps(event.fps)
+              }
+              if (event.data) {
+                if (event.data.current_vehicles !== undefined) {
+                  setCurrentVehicles(event.data.current_vehicles)
+                }
+                if (event.data.total_vehicles !== undefined) {
+                  setTotalVehicles(event.data.total_vehicles)
+                }
               }
               if (event.data?.detections) {
                 setDetections(event.data.detections)
@@ -198,6 +208,8 @@ export default function LivePage() {
           setFps(0)
           setVehicleAcc(0)
           setPlateAcc(0)
+          setCurrentVehicles(0)
+          setTotalVehicles(0)
         }
 
         ws.onerror = (err) => {
@@ -217,6 +229,8 @@ export default function LivePage() {
       setFps(0)
       setVehicleAcc(0)
       setPlateAcc(0)
+      setCurrentVehicles(0)
+      setTotalVehicles(0)
     }
 
     return () => {
@@ -256,6 +270,8 @@ export default function LivePage() {
       setFps(0)
       setVehicleAcc(0)
       setPlateAcc(0)
+      setCurrentVehicles(0)
+      setTotalVehicles(0)
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Dừng stream thất bại')
     } finally {
@@ -273,7 +289,7 @@ export default function LivePage() {
       </div>
 
       {/* Real-time stats dashboard */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
         <div className="border border-border bg-card p-4 rounded-lg flex flex-col justify-center">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">Trạng thái</span>
           <span className={`text-base font-bold mt-1 ${status === 'running' ? 'text-emerald-400' : 'text-slate-400'}`}>
@@ -283,6 +299,12 @@ export default function LivePage() {
         <div className="border border-border bg-card p-4 rounded-lg flex flex-col justify-center">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">FPS</span>
           <span className="text-xl font-bold mt-1 text-sky-400 font-mono">{status === 'running' ? fps : '0.0'}</span>
+        </div>
+        <div className="border border-border bg-card p-4 rounded-lg flex flex-col justify-center font-mono">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-sans">Số xe đã đếm</span>
+          <span className="text-xl font-bold mt-1 text-indigo-400">
+            {status === 'running' ? `${totalVehicles} (Có ${currentVehicles} xe)` : '—'}
+          </span>
         </div>
         <div className="border border-border bg-card p-4 rounded-lg flex flex-col justify-center font-mono">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-sans">Độ chính xác xe</span>

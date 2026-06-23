@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from redis.asyncio import Redis
 from sqlalchemy import text
 
 from app.api.routes import router as recognition_router, streams_router, ws_router
@@ -72,7 +71,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 async def health_check() -> HealthResponse:
     db_status = "connected"
-    redis_status = "connected"
 
     try:
         async with engine.connect() as conn:
@@ -81,18 +79,10 @@ async def health_check() -> HealthResponse:
         logger.warning("DB health check failed: %s", exc)
         db_status = "disconnected"
 
-    try:
-        redis = Redis.from_url(settings.redis_url)
-        await redis.ping()
-        await redis.aclose()
-    except Exception as exc:
-        logger.warning("Redis health check failed: %s", exc)
-        redis_status = "disconnected"
-
-    overall = "ok" if db_status == "connected" and redis_status == "connected" else "degraded"
+    overall = "ok" if db_status == "connected" else "degraded"
     return HealthResponse(
         status=overall,
         db=db_status,
-        redis=redis_status,
+        redis=None,
         version=settings.app_version,
     )

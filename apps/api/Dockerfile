@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
-# Pre-install CPU-only PyTorch to bypass massive CUDA dependencies (>1.5GB) and speed up build
-RUN pip install --no-cache-dir --default-timeout=100 torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# Install PyTorch with CUDA support (standard version from PyPI has built-in CUDA compatibility)
+RUN pip install --no-cache-dir --default-timeout=100 torch torchvision
 RUN pip install --no-cache-dir --default-timeout=100 -r /app/requirements.txt
 
 COPY . /app
