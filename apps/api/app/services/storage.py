@@ -9,23 +9,6 @@ from app.shared.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
-MAGIC_BYTES = {
-    b"\xff\xd8\xff": "jpg",
-    b"\x89PNG\r\n\x1a\n": "png",
-}
-
-
-def validate_image_magic(content: bytes, extension: str) -> bool:
-    ext = extension.lower().lstrip(".")
-    if ext == "jpeg":
-        ext = "jpg"
-    for magic, fmt in MAGIC_BYTES.items():
-        if content.startswith(magic) and fmt == ext:
-            return True
-    return False
-
-
 class StorageService(ABC):
     @abstractmethod
     async def save(self, filename: str, content: bytes) -> str:

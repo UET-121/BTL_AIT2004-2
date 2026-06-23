@@ -19,13 +19,15 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react'
-import { deleteRecognition, getApiBaseUrl, getRecognition, listRecognitions, reprocessRecognition, uploadRecognition } from './api'
+import { deleteRecognition, getApiBaseUrl, getRecognition, listRecognitions, uploadRecognition } from './api'
 import type { BoundingBox, RecognitionRequest, RecognitionStatus, RecognitionSubmitResponse, UiRequest } from './types'
+import LivePage from './live/LivePage'
 import { isTerminalStatus } from './types'
 
 type RouteState =
   | { view: 'home' }
   | { view: 'detail'; id: string }
+  | { view: 'live' }
   | { view: 'not-found' }
 
 type LoadMode = 'api' | 'demo'
@@ -33,8 +35,8 @@ type ToastState = { message: string; kind: 'success' | 'warning' | 'error' } | n
 
 const PAGE_SIZES = [5, 10, 20]
 const POLL_MS = 2000
-const MAX_MEDIA_SIZE = 50 * 1024 * 1024
-const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'])
+const MAX_MEDIA_SIZE = 250 * 1024 * 1024
+const ALLOWED_TYPES = new Set(['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'])
 const MEDIA_VIDEO_RE = /\.(mp4|avi|mov|mpeg|mkv)(?:$|\?)/i
 
 function resolveMediaUrl(url: string) {
@@ -137,76 +139,19 @@ function terminal(status: RecognitionStatus) {
 function currentRoute(): RouteState {
   const path = window.location.pathname
   if (path === '/' || path === '') return { view: 'home' }
+  if (path === '/live') return { view: 'live' }
   const match = path.match(/^\/requests\/([^/]+)$/)
   if (match) return { view: 'detail', id: decodeURIComponent(match[1]) }
   return { view: 'not-found' }
 }
 
 function navigate(route: RouteState) {
-  const path = route.view === 'home' ? '/' : route.view === 'detail' ? `/requests/${encodeURIComponent(route.id)}` : '/404'
+  const path = route.view === 'home' ? '/' : route.view === 'live' ? '/live' : route.view === 'detail' ? `/requests/${encodeURIComponent(route.id)}` : '/404'
   window.history.pushState({}, '', path)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-function loadImage(src: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error('Không tải được ảnh crop'))
-    image.src = src
-  })
-}
-
-async function createCroppedImage(file: File, zoom: number) {
-  const objectUrl = makeObjectUrl(file)
-  try {
-    const image = await loadImage(objectUrl)
-    const ratio = 3 / 1
-    const sourceRatio = image.width / image.height
-
-    let cropWidth = image.width / zoom
-    let cropHeight = image.height / zoom
-
-    if (sourceRatio > ratio) {
-      cropHeight = image.height / zoom
-      cropWidth = cropHeight * ratio
-    } else {
-      cropWidth = image.width / zoom
-      cropHeight = cropWidth / ratio
-    }
-
-    cropWidth = Math.min(cropWidth, image.width)
-    cropHeight = Math.min(cropHeight, image.height)
-
-    const sx = Math.max(0, (image.width - cropWidth) / 2)
-    const sy = Math.max(0, (image.height - cropHeight) / 2)
-
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(cropWidth))
-    canvas.height = Math.max(1, Math.round(cropHeight))
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('Trình duyệt không hỗ trợ canvas')
-
-    ctx.drawImage(image, sx, sy, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height)
-
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((value) => {
-        if (value) resolve(value)
-        else reject(new Error('Không thể tạo file crop'))
-      }, 'image/jpeg', 0.92)
-    })
-
-    const previewUrl = makeObjectUrl(blob)
-    const output = new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'upload'}.jpg`, {
-      type: 'image/jpeg',
-    })
-
-    return { file: output, previewUrl }
-  } finally {
-    URL.revokeObjectURL(objectUrl)
-  }
-}
+// Removed crop/image functions since we only support video now
 
 function AppShell({ children }: { children: ReactNode }) {
   return <div className="min-h-screen bg-background text-foreground">{children}</div>
@@ -279,8 +224,6 @@ function UploadPanel({
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState('')
   const [previewUrl, setPreviewUrl] = useState('')
-  const [cropOpen, setCropOpen] = useState(false)
-  const [zoom, setZoom] = useState(1)
   const [busyLocal, setBusyLocal] = useState(false)
 
   useEffect(() => {
@@ -292,50 +235,26 @@ function UploadPanel({
   const reset = () => {
     setFile(null)
     setError('')
-    setCropOpen(false)
-    setZoom(1)
   }
 
   const pick = (picked?: File) => {
     setError('')
     setFile(null)
-    setCropOpen(false)
     if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
     setPreviewUrl('')
     if (!picked) return
     if (!isAllowedMedia(picked)) {
-      setError('Chỉ chấp nhận ảnh JPG/PNG hoặc video MP4/AVI/MOV/MKV.')
+      setError('Chỉ chấp nhận video MP4/AVI/MOV/MKV.')
       return
     }
     if (picked.size > MAX_MEDIA_SIZE) {
-      setError('File vượt quá 50MB.')
+      setError('File vượt quá 250MB.')
       return
     }
     if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
     const nextPreview = makeObjectUrl(picked)
     setFile(picked)
     setPreviewUrl(nextPreview)
-    
-    const isVid = picked.type.startsWith('video/') || picked.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
-    if (isVid) {
-      setCropOpen(false)
-    } else {
-      setCropOpen(true)
-    }
-  }
-
-  const confirm = async () => {
-    if (!file) return
-    setBusyLocal(true)
-    try {
-      const cropped = await createCroppedImage(file, zoom)
-      await onSubmit(cropped)
-      reset()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload thất bại')
-    } finally {
-      setBusyLocal(false)
-    }
   }
 
   return (
@@ -344,7 +263,7 @@ function UploadPanel({
         <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
           <button
             type="button"
-            aria-label="Kéo thả hoặc chọn ảnh biển số"
+            aria-label="Kéo thả hoặc chọn video biển số"
             disabled={busy || busyLocal}
             onClick={() => inputRef.current?.click()}
             onDrop={(event) => {
@@ -357,7 +276,7 @@ function UploadPanel({
             <input
               ref={inputRef}
               type="file"
-              accept="image/jpeg,image/png,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska"
+              accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska"
               className="hidden"
               onChange={(event) => pick(event.target.files?.[0])}
             />
@@ -366,8 +285,8 @@ function UploadPanel({
                 <UploadCloud size={22} />
               </div>
               <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Upload ảnh/video biển số</h2>
-                <p className="text-sm text-muted-foreground">JPG/PNG/MP4/AVI/MOV tối đa 50MB. Ảnh sẽ được crop 3:1.</p>
+                <h2 className="text-lg font-semibold">Upload video biển số</h2>
+                <p className="text-sm text-muted-foreground">MP4/AVI/MOV/MKV tối đa 250MB.</p>
                 {file && (
                   <p className="inline-flex items-center gap-1.5 text-sm text-accent">
                     <FileImage size={13} />
@@ -389,88 +308,25 @@ function UploadPanel({
               disabled={!file || busy || busyLocal}
               onClick={async () => {
                 if (file) {
-                  const isVid = file.type.startsWith('video/') || file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
-                  if (isVid) {
-                    setBusyLocal(true)
-                    try {
-                      await onSubmit({ file, previewUrl })
-                      reset()
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : 'Upload thất bại')
-                    } finally {
-                      setBusyLocal(false)
-                    }
-                  } else {
-                    setCropOpen(true)
+                  setBusyLocal(true)
+                  try {
+                    await onSubmit({ file, previewUrl })
+                    reset()
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Upload thất bại')
+                  } finally {
+                    setBusyLocal(false)
                   }
                 }
               }}
               className="inline-flex w-full items-center justify-center gap-2 bg-accent px-4 py-2.5 font-semibold text-accent-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy || busyLocal ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-              {busy || busyLocal ? 'Đang upload...' : (file && (file.type.startsWith('video/') || file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)) ? 'Upload Video' : 'Crop & Upload')}
+              {busy || busyLocal ? 'Đang upload...' : 'Upload Video'}
             </button>
           </div>
         </div>
       </div>
-
-      {cropOpen && file && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') setCropOpen(false)
-          }}
-          className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4"
-        >
-          <div className="w-full max-w-2xl border border-border bg-card p-4 shadow-2xl">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <h3 className="font-semibold">Crop ảnh 3:1</h3>
-                <p className="text-sm text-muted-foreground">Phóng to/thu nhỏ trước khi gửi lên backend.</p>
-              </div>
-              <button type="button" onClick={() => setCropOpen(false)} className="p-2 hover:bg-secondary" aria-label="Đóng">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="relative mx-auto aspect-[3/1] max-h-80 overflow-hidden border border-accent bg-black">
-              {previewUrl && <img src={previewUrl} alt="Preview" className="h-full w-full object-cover" style={{ transform: `scale(${zoom})` }} />}
-              <div className="absolute inset-4 border-2 border-accent">
-                <span className="bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground">3:1</span>
-              </div>
-            </div>
-
-            <label className="mt-4 block text-sm">
-              Zoom
-              <input
-                type="range"
-                min="1"
-                max="2"
-                step="0.05"
-                value={zoom}
-                onChange={(event) => setZoom(Number(event.target.value))}
-                className="mt-2 w-full"
-              />
-            </label>
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className="border border-border px-4 py-2 hover:bg-secondary" onClick={() => setCropOpen(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy || busyLocal}
-                onClick={confirm}
-                className="inline-flex items-center gap-2 bg-primary px-4 py-2 text-primary-foreground disabled:opacity-60"
-              >
-                {busy || busyLocal ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                Confirm
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   )
 }
@@ -490,7 +346,7 @@ function EmptyState() {
     <div className="border border-border bg-card p-10 text-center">
       <FileImage className="mx-auto text-muted-foreground" />
       <h3 className="mt-3 font-semibold">Chưa có dữ liệu nhận diện</h3>
-      <p className="text-sm text-muted-foreground">Upload một ảnh biển số để bắt đầu luồng kiểm thử.</p>
+      <p className="text-sm text-muted-foreground">Upload một video để bắt đầu luồng nhận diện.</p>
     </div>
   )
 }
@@ -748,17 +604,14 @@ function DetailView({
   item,
   loading,
   onBack,
-  onReprocess,
   onDelete,
 }: {
   item: UiRequest | null
   loading: boolean
   onBack: () => void
-  onReprocess: (id: string) => void
   onDelete: (item: UiRequest) => void
 }) {
   const [zoom, setZoom] = useState(1)
-  const [confirm, setConfirm] = useState(false)
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
@@ -930,15 +783,6 @@ function DetailView({
             )}
 
             <div className="mt-4 grid gap-2">
-              {['FAILED', 'NEEDS_REVIEW'].includes(item.status) && (
-                <button
-                  type="button"
-                  onClick={() => setConfirm(true)}
-                  className="inline-flex w-full items-center justify-center gap-2 bg-accent px-4 py-2.5 text-accent-foreground transition hover:opacity-90"
-                >
-                  <RotateCcw size={16} /> Reprocess
-                </button>
-              )}
               <button
                 type="button"
                 onClick={() => onDelete(item)}
@@ -952,30 +796,6 @@ function DetailView({
           <ConfidenceCard item={item} />
         </aside>
       </div>
-
-      {confirm && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
-          <div className="max-w-md border border-border bg-card p-5">
-            <h3 className="font-semibold">Xác nhận reprocess?</h3>
-            <p className="mt-2 text-sm text-muted-foreground">Trạng thái sẽ quay về NOT_STARTED và worker sẽ chạy lại request này.</p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" className="border border-border px-4 py-2 hover:bg-secondary" onClick={() => setConfirm(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="bg-accent px-4 py-2 text-accent-foreground"
-                onClick={() => {
-                  onReprocess(item.id)
-                  setConfirm(false)
-                }}
-              >
-                Reprocess
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   )
 }
@@ -1084,9 +904,11 @@ export default function App() {
   }
 
   useEffect(() => {
-    void loadList(page, pageSize)
+    if (route.view === 'home') {
+      void loadList(page, pageSize)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize])
+  }, [page, pageSize, route.view])
 
   useEffect(() => {
     if (route.view !== 'detail') {
@@ -1136,9 +958,16 @@ export default function App() {
     setUploadBusy(true)
     try {
       await uploadRecognition(payload.file)
-      navigate({ view: 'home' })
-      setRefreshToken((value) => value + 1)
-      applyToast('Upload thành công')
+      
+      const isVid = payload.file.type.startsWith('video/') || payload.file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
+      if (isVid) {
+        navigate({ view: 'live' })
+        applyToast('Đang phát video upload dạng stream realtime')
+      } else {
+        navigate({ view: 'home' })
+        setRefreshToken((value) => value + 1)
+        applyToast('Upload thành công')
+      }
     } catch (error) {
       applyToast(error instanceof Error ? error.message : 'Upload thất bại', 'error')
       throw error
@@ -1147,15 +976,6 @@ export default function App() {
     }
   }
 
-  const handleReprocess = async (requestId: string) => {
-    try {
-      await reprocessRecognition(requestId)
-      applyToast('Reprocessing started')
-      setRefreshToken((value) => value + 1)
-    } catch (error) {
-      applyToast(error instanceof Error ? error.message : 'Reprocess thất bại', 'error')
-    }
-  }
 
   const handleDeleteRequest = (item: UiRequest) => {
     setDeleteTarget(item)
@@ -1192,14 +1012,46 @@ export default function App() {
 
       {notice && <NetworkBanner message={notice} />}
 
+      {route.view !== 'detail' && route.view !== 'not-found' && (
+        <div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6">
+          <div className="flex border-b border-border">
+            <button
+              type="button"
+              onClick={() => navigate({ view: 'home' })}
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${
+                route.view === 'home'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Lịch sử Upload
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate({ view: 'live' })}
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${
+                route.view === 'live'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Giám sát Live
+            </button>
+          </div>
+        </div>
+      )}
+
       {route.view === 'detail' ? (
         <DetailView
           loading={detailLoading}
           item={selectedItem}
           onBack={() => navigate({ view: 'home' })}
-          onReprocess={handleReprocess}
           onDelete={handleDeleteRequest}
         />
+      ) : route.view === 'live' ? (
+        <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6">
+          <LivePage />
+        </main>
       ) : route.view === 'not-found' ? (
         <main className="mx-auto max-w-5xl p-6">
           <div className="border border-border bg-card p-8">

@@ -16,10 +16,8 @@ from app.models.schemas import (
     RecognitionRequestSubmitResponse,
 )
 from app.services.storage import (
-    ALLOWED_EXTENSIONS,
     StorageService,
     get_storage_service,
-    validate_image_magic,
 )
 from app.shared.database import get_db
 
@@ -27,18 +25,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/recognition", tags=["recognition"])
 
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB for video support
+MAX_FILE_SIZE = 250 * 1024 * 1024  # 250MB for video support
 CONTENT_TYPE_MAP = {
-    "image/jpeg": "jpg",
-    "image/jpg": "jpg",
-    "image/png": "png",
     "video/mp4": "mp4",
     "video/mpeg": "mpeg",
     "video/quicktime": "mov",
     "video/x-msvideo": "avi",
     "video/x-matroska": "mkv",
 }
-
 
 
 def _to_response(record: RecognitionRequest) -> RecognitionRequestResponse:
@@ -56,21 +50,21 @@ def _resolve_storage_key(image_url: str) -> str:
 @router.post(
     "",
     response_model=RecognitionRequestSubmitResponse,
-    summary="Upload media for plate recognition",
-    description="Accepts JPEG/PNG image or video, stores it, creates a recognition request, and queues async processing.",
+    summary="Upload video for plate recognition",
+    description="Accepts video, stores it, creates a recognition request, and queues real-time stream processing.",
 )
 async def create_recognition_request(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     storage: StorageService = Depends(get_storage_service),
 ) -> RecognitionRequestSubmitResponse:
-    if not file.content_type or (not file.content_type.startswith("image/") and not file.content_type.startswith("video/")):
-        raise HTTPException(status_code=400, detail="File must be an image or video")
+    if not file.content_type or not file.content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="File must be a video")
 
     if file.content_type not in CONTENT_TYPE_MAP:
         raise HTTPException(
             status_code=400,
-            detail="Allowed file types: image/jpeg, image/png, video/mp4, video/mpeg, video/quicktime, video/x-msvideo, video/x-matroska",
+            detail="Allowed file types: video/mp4, video/mpeg, video/quicktime, video/x-msvideo, video/x-matroska",
         )
 
     extension = CONTENT_TYPE_MAP[file.content_type]
@@ -78,7 +72,6 @@ async def create_recognition_request(
     filename = f"{request_id}.{extension}"
     temp_path: str | None = None
     total_bytes = 0
-    prefix = bytearray()
 
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{extension}") as temp_file:
@@ -89,36 +82,44 @@ async def create_recognition_request(
                     break
                 total_bytes += len(chunk)
                 if total_bytes > MAX_FILE_SIZE:
-                    raise HTTPException(status_code=400, detail="File exceeds 50MB limit")
-                if len(prefix) < 16:
-                    prefix.extend(chunk[: 16 - len(prefix)])
+                    raise HTTPException(status_code=400, detail="File exceeds 250MB limit")
                 temp_file.write(chunk)
-
-        if file.content_type.startswith("image/"):
-            if not validate_image_magic(bytes(prefix), extension):
-                raise HTTPException(status_code=400, detail="File content does not match image type")
 
         if temp_path is None:
             raise HTTPException(status_code=400, detail="Failed to persist upload")
 
         image_url = await storage.save_path(filename, temp_path)
+
+        # For videos, preserve a local copy and launch the real-time stream
+        import shutil
+        from app.shared.config import get_settings
+        from app.realtime.manager import stream_manager
+
+        settings = get_settings()
+        upload_dir_path = Path(settings.upload_dir)
+        upload_dir_path.mkdir(parents=True, exist_ok=True)
+        local_video_path = upload_dir_path / filename
+        shutil.copy2(temp_path, local_video_path)
+
+        # Automatically launch real-time stream with this local file
+        stream_manager.stop_stream()
+        stream_manager.start_stream(str(local_video_path))
+        logger.info("Launched real-time stream processing on local video path: %s", local_video_path)
     finally:
         if temp_path:
             Path(temp_path).unlink(missing_ok=True)
 
+    # Videos are processed via streaming; mark the request as PENDING initially
     record = RecognitionRequest(
         id=request_id,
         image_url=image_url,
-        status=RecognitionStatus.NOT_STARTED,
+        status=RecognitionStatus.PENDING,
     )
     db.add(record)
     await db.flush()
 
-    from app.worker.tasks import process_plate_recognition
+    logger.info("Created recognition request %s for video streaming", request_id)
 
-    process_plate_recognition.delay(str(request_id))
-
-    logger.info("Created recognition request %s", request_id)
     return RecognitionRequestSubmitResponse(
         request_id=record.id,
         status=record.status,
@@ -129,7 +130,7 @@ async def create_recognition_request(
 @router.get(
     "/{request_id}",
     response_model=RecognitionRequestResponse,
-    summary="Get recognition request by ID",
+    summary="Get details of a recognition request",
 )
 async def get_recognition_request(
     request_id: UUID,
@@ -182,49 +183,6 @@ async def list_recognition_requests(
     )
 
 
-@router.post(
-    "/{request_id}/reprocess",
-    response_model=RecognitionRequestSubmitResponse,
-    summary="Reprocess a failed or needs-review request",
-)
-async def reprocess_recognition_request(
-    request_id: UUID,
-    db: AsyncSession = Depends(get_db),
-) -> RecognitionRequestSubmitResponse:
-    record = await db.get(RecognitionRequest, request_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Recognition request not found")
-
-    if record.status not in (RecognitionStatus.FAILED, RecognitionStatus.NEEDS_REVIEW):
-        raise HTTPException(
-            status_code=400,
-            detail="Only FAILED or NEEDS_REVIEW requests can be reprocessed",
-        )
-
-    record.plate_number = None
-    record.error_message = None
-    record.confidence_score = None
-    record.detection_confidence = None
-    record.ocr_confidence = None
-    record.needs_review = False
-    record.bounding_box = None
-    record.plate_region = None
-    record.metadata_json = None
-    record.status = RecognitionStatus.NOT_STARTED
-    await db.flush()
-
-    from app.worker.tasks import process_plate_recognition
-
-    process_plate_recognition.delay(str(request_id))
-    logger.info("Requeued recognition request %s", request_id)
-
-    return RecognitionRequestSubmitResponse(
-        request_id=record.id,
-        status=record.status,
-        created_at=record.created_at,
-    )
-
-
 @router.delete(
     "/{request_id}",
     status_code=204,
@@ -249,3 +207,47 @@ async def delete_recognition_request(
     await db.commit()
     logger.info("Deleted recognition request %s", request_id)
     return Response(status_code=204)
+
+
+# --- Stream Processing and Real-Time WebSockets ---
+
+from fastapi import WebSocket, WebSocketDisconnect
+from app.realtime.manager import stream_manager
+from app.realtime.broadcaster import broadcaster
+from app.realtime.schemas import StreamStartRequest, StreamStatusResponse
+
+streams_router = APIRouter(prefix="/api/v1/streams", tags=["streams"])
+ws_router = APIRouter(tags=["realtime"])
+
+
+@streams_router.post("/start", response_model=StreamStatusResponse, summary="Start realtime stream")
+async def start_realtime_stream(req: StreamStartRequest) -> StreamStatusResponse:
+    logger.info("HTTP request to start stream: %s", req.source)
+    return stream_manager.start_stream(req.source)
+
+
+@streams_router.post("/stop", response_model=StreamStatusResponse, summary="Stop realtime stream")
+async def stop_realtime_stream() -> StreamStatusResponse:
+    logger.info("HTTP request to stop stream")
+    return stream_manager.stop_stream()
+
+
+@streams_router.get("/status", response_model=StreamStatusResponse, summary="Get realtime stream status")
+async def get_realtime_stream_status() -> StreamStatusResponse:
+    return stream_manager.get_status()
+
+
+@ws_router.websocket("/ws/live")
+async def websocket_live_endpoint(websocket: WebSocket) -> None:
+    await broadcaster.connect(websocket)
+    try:
+        while True:
+            # Receive message to keep socket alive and detect disconnections
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        broadcaster.disconnect(websocket)
+    except Exception as exc:
+        logger.warning("Error in websocket connection: %s", exc)
+        broadcaster.disconnect(websocket)

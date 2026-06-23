@@ -56,26 +56,8 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-uploads}
       CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
-
-  worker:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile
-    depends_on:
-      - db
-      - redis
-      - minio
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/plate_recognition}
-      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379/0}
-      STORAGE_TYPE: ${STORAGE_TYPE:-minio}
-      MINIO_URL: ${MINIO_URL:-http://minio:9000}
-      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-uploads}
-    command: [ "sh", "-c", "celery -A app.worker.celery_app.celery_app worker --loglevel=info --concurrency=1" ]
-
+      PLATE_DETECTION_MODEL: ${PLATE_DETECTION_MODEL:-license_plate_detector.pt}
+      DEFAULT_PLATE_REGION: ${DEFAULT_PLATE_REGION:-GB}
   minio:
     image: minio/minio:latest
     ports:
@@ -102,7 +84,8 @@ services:
     ports:
       - "5173:5173"
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: ""
+      BACKEND_PROXY_TARGET: "http://api:8000"
       VITE_USE_DEMO_DATA: "false"
 
 volumes:

@@ -24,3 +24,15 @@ models/onnx/*.onnx
 # IDE
 .idea/
 .vscode/
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+

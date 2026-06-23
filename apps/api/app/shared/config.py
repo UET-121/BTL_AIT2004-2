@@ -68,11 +68,6 @@ class Settings(BaseSettings):
     log_format: Literal["json", "text"] = Field(default="text", alias="LOG_FORMAT")
     debug: bool = Field(default=False, alias="DEBUG")
 
-    # Worker
-    fail_fast_on_missing_model: bool = Field(
-        default=False, alias="FAIL_FAST_ON_MISSING_MODEL"
-    )
-
     app_version: str = "1.0.0"
 
     @field_validator("cors_origins", mode="before")
@@ -85,10 +80,6 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return value
         raise ValueError("CORS_ORIGINS must be a JSON array or list")
-
-    @property
-    def database_url_sync(self) -> str:
-        return self.database_url.replace("+asyncpg", "")
 
 
 @lru_cache
