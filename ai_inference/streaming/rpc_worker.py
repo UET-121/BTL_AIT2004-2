@@ -45,9 +45,9 @@ def processing(image_b64):
     x_min, y_min = max(0, int(bbox[0])), max(0, int(bbox[1]))
     x_max, y_max = max(0, int(bbox[2])), max(0, int(bbox[3]))
     crop_img = image[y_min:y_max, x_min:x_max]
-    vector = pipeline.embedding_frame(crop_img).flatten().tolist()
+    plate_text = pipeline.recognize_plate(crop_img)
 
-    return vector, bbox
+    return plate_text, bbox
 
 
 async def get_connection():
@@ -85,14 +85,14 @@ async def rpc_worker_main():
                             f"Đã nhận 1 ảnh (Mã vé: {message.correlation_id}). Đang phân tích..."
                         )
 
-                        vector, bbox = await asyncio.to_thread(processing, image_b64)
+                        plate_text, bbox = await asyncio.to_thread(processing, image_b64)
 
                         response_data = {
                             "status": "success",
                             "bbox": bbox,
-                            "vector": vector,
+                            "plate_text": plate_text,
                         }
-                        logger.info("Trích xuất Vector thành công!")
+                        logger.info(f"Đọc biển số thành công: {plate_text}")
 
                     except Exception as e:
                         logger.error(f"Lỗi khi xử lý ảnh: {e}")

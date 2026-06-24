@@ -1,0 +1,25 @@
+
+@layer base {
+  html {
+    font-family:
+      Inter,
+      "Segoe UI",
+      "Helvetica Neue",
+      Arial,
+      ui-sans-serif,
+      system-ui,
+      sans-serif;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+    color: var(--foreground);
+  }
+}

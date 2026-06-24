@@ -1,22 +1,20 @@
-from fastapi import UploadFile
 import base64
-import io
-from PIL import Image
-
+from fastapi import UploadFile
 from .rpc_client import rpc_client
 
+async def extract_license_plate_service(file: UploadFile) -> str:
+    """
+    Đọc file ảnh, gửi qua RabbitMQ RPC để trích xuất chữ biển số (OCR).
+    """
+    contents = await file.read()
+    image_base64 = base64.b64encode(contents).decode("utf-8")
 
-async def extract_license_plate_vector_service(file: UploadFile) -> list:
+    response = await rpc_client.call_extract_license_plate(image_base64)
 
-    image_data = await file.read()
-    img = Image.open(io.BytesIO(image_data))
-    buffered = io.BytesIO()
-    img.convert("RGB").save(buffered, format="JPEG", quality=80)
-    image_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-    result = await rpc_client.call_extract_vector(image_b64)
-
-    if result.get("status") == "error":
-        raise ValueError(result.get("message"))
-
-    return result.get("vector")
+    if response.get("status") == "success":
+        plate_text = response.get("plate_text")
+        if not plate_text:
+            raise ValueError("Không thể nhận diện chữ từ biển số trong ảnh.")
+        return plate_text
+    else:
+        raise ValueError(response.get("message", "Lỗi không xác định từ AI Worker."))

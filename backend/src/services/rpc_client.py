@@ -44,7 +44,7 @@ class ImageProcessorRPC:
         if future:
             future.set_result(json.loads(message.body.decode()))
 
-    async def call_extract_vector(self, image_base64: str) -> dict:
+    async def call_extract_license_plate(self, image_base64: str) -> dict:
         if not self.connection:
             await self.connect()
 

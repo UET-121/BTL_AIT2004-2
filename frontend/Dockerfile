@@ -1,28 +1,19 @@
-# Build stage
-FROM node:20-alpine AS builder
+FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy dependencies
-COPY package*.json ./
-RUN npm install
+COPY package.json ./
+COPY tsconfig.json ./
+COPY vite.config.ts ./
+COPY index.html ./
+COPY postcss.config.mjs ./
+COPY src ./src
+COPY default_shadcn_theme.css ./
 
-# Copy source and build
-COPY . .
-RUN npm run build
+RUN npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-retries 5 && \
+    npm install
 
-# Production stage
-FROM nginx:alpine
+EXPOSE 5173
 
-# Remove default nginx config
-RUN rm /etc/nginx/conf.d/default.conf
-
-# Copy custom nginx config
-COPY nginx.conf /etc/nginx/conf.d/
-
-# Copy built assets
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

@@ -1,0 +1,26 @@
+name: "vehicle_detection"
+platform: "tensorrt_plan"
+max_batch_size: 0
+
+input [
+  {
+    name: "images"
+    data_type: TYPE_FP32
+    dims: [ 1, 3, 640, 640 ]
+  }
+]
+
+output [
+  {
+    name: "output0"
+    data_type: TYPE_FP32
+    dims: [ 1, 84, 8400 ]
+  }
+]
+
+instance_group [
+  {
+    count: 2
+    kind: KIND_GPU
+  }
+]

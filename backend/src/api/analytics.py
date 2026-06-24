@@ -30,7 +30,7 @@ async def get_analytics_overview(
     total_detections = res_total.scalar() or 0
 
     stmt_unknown = select(func.count(Log.id)).where(
-        and_(Log.create_at >= today_start, Log.person_id == None)
+        and_(Log.create_at >= today_start, Log.profile_id == None)
     )
     res_unknown = await db.execute(stmt_unknown)
     unknown_detections = res_unknown.scalar() or 0

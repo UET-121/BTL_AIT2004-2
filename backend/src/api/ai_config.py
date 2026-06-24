@@ -18,7 +18,6 @@ async def get_ai_config(user: User = Depends(admin_required)):
     return {
         "conf_thres": float(detect_config.get("conf_thres", 0.5)) if detect_config else 0.5,
         "iou_thres": float(detect_config.get("iou_thres", 0.4)) if detect_config else 0.4,
-        "license_plate_match_threshold": float(detect_config.get("license_plate_match_threshold", Config.FACE_MATCH_THRESHOLD)) if detect_config else Config.FACE_MATCH_THRESHOLD
     }
 
 @router.put("/detect-thresholds")
@@ -33,25 +32,3 @@ async def update_ai_thresholds(
     )
 
     return {"status": "success", "message": "Đã cập nhật cấu hình AI toàn hệ thống."}
-
-
-@router.put("/recognition-threshold")
-async def update_recognition_threshold(
-    threshold: float = None,
-    user: User = Depends(admin_required),
-):
-    await redis_client.hset(
-        "ai_global_config",
-        mapping={"license_plate_match_threshold": str(threshold)},
-    )
-
-    cmd_pub = CommandPublisher()
-
-    cmd_pub.send_reg_config(threshold)
-    cmd_pub.close()
-
-    return {
-        "status": "success",
-        "message": f"Đã phát lệnh cập nhật ngưỡng nhận diện thành {threshold} cho toàn bộ hệ thống AI.",
-    }
-

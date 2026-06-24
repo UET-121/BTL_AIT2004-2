@@ -36,6 +36,8 @@ from .api.ai_config import router as config_router
 from .api.analytics import router as analytics_router
 from .api.webhooks import router as webhook_router
 from .api.users import router as users_router
+from .api.streams import router as streams_router
+from .api.recognition_api import router as recognition_api_router
 from .middleware.rate_limit import limiter
 
 from .services.rabbitmq import init_rabbitmq, close_rabbitmq
@@ -198,6 +200,8 @@ app.include_router(config_router)
 app.include_router(analytics_router)
 app.include_router(webhook_router)
 app.include_router(users_router)
+app.include_router(streams_router)
+app.include_router(recognition_api_router)
 
 
 @app.middleware("http")
@@ -247,6 +251,24 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             try:
                 data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+    finally:
+        ws_manager.disconnect(websocket)
+
+
+# ─── WebSocket Live: stream real-time frames + plate detection events ─────────
+# ai_worker gửi frames base64 + events qua RabbitMQ → mqlistener broadcast
+# Tất cả clients kết nối /ws/live đều nhận được cùng một luồng.
+@app.websocket("/ws/live")
+async def websocket_live_endpoint(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            try:
+                await websocket.receive_text()  # giữ kết nối; client không cần gửi data
             except WebSocketDisconnect:
                 break
             except Exception:

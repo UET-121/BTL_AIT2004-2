@@ -1,5 +1,4 @@
 import json
-import numpy as np
 from sqlalchemy.future import select
 from cachetools import LRUCache
 
@@ -8,51 +7,49 @@ from shared.models.profile import Profile
 from shared.core.redis import redis_client
 from shared.config.logger import log as logger
 
-RAM_FACE_CACHE = LRUCache(maxsize=1000)
+RAM_PLATE_CACHE = LRUCache(maxsize=1000)
 
 
-async def sync_vector_to_redis():
+async def sync_plate_to_redis():
 
-    logger.info("[CACHE] Kích hoạt quá trình đồng bộ Vector toàn hệ thống...")
+    logger.info("[CACHE] Kích hoạt quá trình đồng bộ Biển số lên Redis...")
 
     async with AsyncSessionLocal() as db:
         try:
 
-            query = select(Profile.id, Profile.license_plate_embedding).where(
-                Profile.license_plate_embedding.isnot(None)
+            query = select(Profile.id, Profile.license_plate_number).where(
+                Profile.license_plate_number.isnot(None)
             )
             result = await db.execute(query)
             profiles = result.all()
 
             if not profiles:
-                logger.warning("[CACHE] Không có vector biển số nào trong Database.")
+                logger.warning("[CACHE] Không có biển số nào trong Database.")
                 return
 
             pipeline = redis_client.pipeline()
 
-            pipeline.delete("license_plate_vectors_hash")
+            pipeline.delete("license_plate_texts_hash")
 
             local_ram_dict = {}
 
-            for profile_id, vector_data in profiles:
-                if isinstance(vector_data, str):
-                    vector_list = json.loads(vector_data)
-                else:
-                    vector_list = vector_data
+            for profile_id, plate_text in profiles:
+                if not plate_text:
+                    continue
 
                 pipeline.hset(
-                    "license_plate_vectors_hash", str(profile_id), json.dumps(vector_list)
+                    "license_plate_texts_hash", plate_text, str(profile_id)
                 )
 
-                local_ram_dict[profile_id] = np.array(vector_list, dtype=np.float32)
+                local_ram_dict[plate_text] = profile_id
 
             await pipeline.execute()
 
-            RAM_FACE_CACHE.clear()
-            for p_id, vec in local_ram_dict.items():
-                if len(RAM_FACE_CACHE) >= 1000:
+            RAM_PLATE_CACHE.clear()
+            for p_text, p_id in local_ram_dict.items():
+                if len(RAM_PLATE_CACHE) >= 1000:
                     break
-                RAM_FACE_CACHE[p_id] = vec
+                RAM_PLATE_CACHE[p_text] = p_id
 
             logger.info(
                 f"[CACHE] Đã đồng bộ {len(profiles)} biển số lên Redis và RAM thành công!"
@@ -60,5 +57,5 @@ async def sync_vector_to_redis():
 
         except Exception as e:
             logger.error(
-                f"[CACHE] Lỗi nghiêm trọng khi đồng bộ Vector: {e}", exc_info=True
+                f"[CACHE] Lỗi nghiêm trọng khi đồng bộ Biển số: {e}", exc_info=True
             )

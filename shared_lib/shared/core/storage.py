@@ -56,12 +56,16 @@ def ensure_bucket_exists():
                 ]
             }
 
-            s3_client.put_bucket_lifecycle_configuration(
-                Bucket=BUCKET_NAME, LifecycleConfiguration=lifecycle_config
-            )
-            log.info(
-                f"[MinIO] Đã nạp thành công luật dọn rác tự động cho '{BUCKET_NAME}'."
-            )
+            try:
+                s3_client.put_bucket_lifecycle_configuration(
+                    Bucket=BUCKET_NAME, 
+                    LifecycleConfiguration=lifecycle_config
+                )
+                log.info(
+                    f"[MinIO] Đã nạp thành công luật dọn rác tự động cho '{BUCKET_NAME}'."
+                )
+            except Exception as e:
+                log.warning(f"[MinIO] Bỏ qua thiết lập luật dọn rác tự động do lỗi MD5/Endpoint: {e}")
             return
         except EndpointConnectionError:
             print(f"[*] MinIO chưa sẵn sàng, chờ 5s... (Còn {retries} lần thử)")

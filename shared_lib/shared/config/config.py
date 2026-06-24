@@ -15,7 +15,7 @@ class Config:
     MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
     MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
     MINIO_ENDPOINT = os.getenv("MINIO_URL")
-    MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "license_plate-recognition-bucket")
+    MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "license-plate-recognition-bucket")
     # Other configurations can be added here as needed
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")

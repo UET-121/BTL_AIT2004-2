@@ -63,6 +63,36 @@ async def process_task(message: aio_pika.IncomingMessage):
             await redis_client.delete(f"heartbeat:{camera_id}")
             log.info(f"Đã dập tắt luồng camera {camera_id}")
 
+        # ── Single-stream control (dùng camera_id="stream_0") ──────────────
+        elif action == "STREAM_START":
+            source = payload.get("source", "0")
+            stream_id = "stream_0"
+            if stream_id in ACTIVE_WORKERS and ACTIVE_WORKERS[stream_id].is_alive():
+                log.warning("Single stream đã đang chạy, bỏ qua lệnh START.")
+                return
+            ctx = multiprocessing.get_context("spawn")
+            p = ctx.Process(target=stream, args=(stream_id, source))
+            p.start()
+            ACTIVE_WORKERS[stream_id] = p
+            await redis_client.set(f"stream_pid:{stream_id}", p.pid)
+            await redis_client.hset("stream:status", mapping={
+                "status": "running", "source": source, "error_message": ""
+            })
+            log.info(f"[SingleStream] Đã khởi động stream từ nguồn: {source}")
+
+        elif action == "STREAM_STOP":
+            stream_id = "stream_0"
+            if stream_id in ACTIVE_WORKERS:
+                worker_process = ACTIVE_WORKERS[stream_id]
+                worker_process.terminate()
+                worker_process.join(timeout=5)
+                del ACTIVE_WORKERS[stream_id]
+            await redis_client.delete(f"stream_pid:{stream_id}")
+            await redis_client.hset("stream:status", mapping={
+                "status": "stopped", "error_message": ""
+            })
+            log.info("[SingleStream] Đã dừng stream.")
+
 
 async def start_ai_consumer():
     connection = None
@@ -81,8 +111,9 @@ async def start_ai_consumer():
     queue = await channel.declare_queue("ai_command_queue", durable=True)
 
     await queue.bind(exchange, routing_key="task.camera.#")
+    await queue.bind(exchange, routing_key="task.stream.#")
 
-    print("[*] AI Consumer đang lắng nghe các lệnh điều khiển Camera...")
+    print("[*] AI Consumer đang lắng nghe các lệnh điều khiển Camera và Stream...")
 
     await queue.consume(process_task)
     await asyncio.Future()

@@ -51,7 +51,7 @@ async def process_export_task(payload: dict, bbox_out_queue, log_type: str = "de
                 select(
                     DetectionLog.create_at.label("Thời gian"),
                     DetectionLog.camera_id.label("Mã Camera"),
-                    DetectionLog.person_id.label("ID Theo Vết"),
+                    DetectionLog.profile_id.label("ID Theo Vết/Biển số"),
                 )
             )
             if start_date and end_date:

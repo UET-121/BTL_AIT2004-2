@@ -28,7 +28,7 @@ services:
     runtime: nvidia
     volumes:
       - ./model_repo:/models
-    command: ["tritonserver", "--model-repository=/models", "--model-control-mode=explicit", "--load-model=license_plate_detection", "--load-model=license_plate_recognition"]
+    command: ["tritonserver", "--model-repository=/models", "--model-control-mode=explicit", "--load-model=license_plate_detection", "--load-model=vehicle_detection"]
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

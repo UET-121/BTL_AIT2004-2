@@ -71,14 +71,16 @@ def generate_pbtxt_and_get_shapes(
 
     main_input = inputs[0]
     input_name = main_input["name"]
-    base_shape = "x".join(main_input["dims"])
 
-    min_shape = f"{input_name}:1x{base_shape}"
-    opt_shape = f"{input_name}:4x{base_shape}"
-    max_shape = f"{input_name}:{max_batch}x{base_shape}"
-
-    # In ra dạng chuẩn để Bash đọc được
-    print(f"SHAPES={min_shape};{opt_shape};{max_shape}")
+    has_dynamic_batch = any(not str(d).isdigit() for d in main_input["dims"])
+    if has_dynamic_batch or main_input["dims"][0] == "-1" or main_input["dims"][0] == "None" or not str(main_input["dims"][0]).isdigit():
+        base_shape = "x".join(main_input["dims"][1:])
+        min_shape = f"{input_name}:1x{base_shape}"
+        opt_shape = f"{input_name}:4x{base_shape}"
+        max_shape = f"{input_name}:{max_batch}x{base_shape}"
+        print(f"SHAPES={min_shape};{opt_shape};{max_shape}")
+    else:
+        print("SHAPES=STATIC")
 
 
 if __name__ == "__main__":

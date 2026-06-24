@@ -3,5 +3,5 @@ from .camera import Camera
 from .user import User
 from .detection import DetectionLog
 from .webhooks import WebhookConfig
-
 from .recognition import RecognitionLog
+from .request import DetectionRequest

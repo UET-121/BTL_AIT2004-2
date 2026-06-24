@@ -2,6 +2,7 @@ import os
 import sys
 import cv2
 import time
+import base64
 import redis
 import logging
 import numpy as np
@@ -61,7 +62,6 @@ def stream(camera_id, link):
         pub_thread.start()
 
         pipeline = LicensePlatePipeline()
-        pipeline.triton.check_models_ready(["license_plate_detection", "license_plate_recognition"])
         current_conf = pipeline.conf
         current_iou = pipeline.iou_thres
 
@@ -142,6 +142,10 @@ def stream(camera_id, link):
                 except Exception as e:
                     logger.warning(f"Lỗi khi đồng bộ cấu hình Redis: {e}")
 
+            # Frame skipping logic (process 1 out of every 3 frames)
+            if frame_count % 3 != 0:
+                continue
+
             ui_boxes = []
             detected_license_plates = pipeline.detect_frame(frame)
 
@@ -172,9 +176,10 @@ def stream(camera_id, link):
                     if time.time() - last_sent > 10.0:
                         crop_img = frame[y_min:y_max, x_min:x_max]
                         if crop_img.size > 0:
-                            license_plate_vector = (
-                                pipeline.embedding_frame(crop_img).flatten().tolist()
-                            )
+                            plate_text = pipeline.recognize_plate(crop_img)
+                            if not plate_text:
+                                continue # Skip if no text recognized
+
                             crop_img = cv2.resize(crop_img, (150, 150))
                             success, encoded_img = cv2.imencode(".jpg", crop_img)
 
@@ -202,8 +207,8 @@ def stream(camera_id, link):
                                             "topic": f"license_plate.{camera_id}",
                                             "payload": {
                                                 "camera_id": camera_id,
-                                                "person_id": "unknown",
-                                                "vector": license_plate_vector,
+                                                "profile_id": "unknown",
+                                                "plate_text": plate_text,
                                                 "image_url": image_url,
                                                 "track_id": int(track_id),
                                             },
@@ -216,7 +221,52 @@ def stream(camera_id, link):
                                 published_tracks[track_id] = time.time()
 
             try:
-                if len(ui_boxes) > 0:
+                if camera_id == "stream_0" and frame is not None:
+                    # Publish the annotated frame as base64 for the frontend LivePage
+                    fps_val = round(1.0 / (time.time() - _last_frame_time + 1e-9), 1) if '_last_frame_time' in locals() else 0
+                    display_frame = cv2.resize(frame, (640, 360))
+                    # Draw bboxes on frame
+                    for box in ui_boxes:
+                        bx = box["bbox"]
+                        cv2.rectangle(display_frame, (bx[0] * 640 // frame_width, bx[1] * 360 // frame_height),
+                                      (bx[2] * 640 // frame_width, bx[3] * 360 // frame_height), (0, 255, 80), 2)
+                    _, jpeg = cv2.imencode(".jpg", display_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                    img_b64 = base64.b64encode(jpeg.tobytes()).decode("utf-8")
+
+                    # Build detection list for UI
+                    ui_detections = []
+                    for box in ui_boxes:
+                        ui_detections.append({
+                            "track_id": box["track_id"],
+                            "bbox": {
+                                "x": box["bbox"][0],
+                                "y": box["bbox"][1],
+                                "width": box["bbox"][2] - box["bbox"][0],
+                                "height": box["bbox"][3] - box["bbox"][1],
+                            },
+                            "text": "",
+                            "confidence": 0,
+                            "status": "pending",
+                        })
+
+                    try:
+                        bbox_out_queue.put_nowait({
+                            "topic": "ui.live.frame",
+                            "payload": {
+                                "type": "frame.processed",
+                                "image_base64": img_b64,
+                                "fps": fps_val,
+                                "data": {
+                                    "detections": ui_detections,
+                                    "current_vehicles": len(ui_boxes),
+                                    "total_vehicles": frame_count // 3,
+                                },
+                            },
+                        })
+                    except queue.Full:
+                        pass
+
+                elif len(ui_boxes) > 0:
                     bbox_out_queue.put_nowait(
                         {
                             "topic": f"ui.license_plate.detected.{camera_id}",

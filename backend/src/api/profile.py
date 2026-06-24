@@ -14,7 +14,7 @@ from sqlalchemy import desc
 from typing import Optional
 from urllib.parse import urlparse
 
-from ..services.license_plate_extract_service import extract_license_plate_vector_service
+from urllib.parse import urlparse
 from ..services.mq_command import CommandPublisher
 from ..security.user_manage import manager_required, admin_required
 
@@ -31,17 +31,16 @@ router = APIRouter(prefix="/api/profiles", tags=["Profiles"])
 @router.post("/create-new-profile")
 async def create_new_profile(
     name: str = Form(...),
-    file: UploadFile = File(...),
+    license_plate_number: str = Form(...),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(manager_required),
 ):
     try:
-        vector_data = await extract_license_plate_vector_service(file)
-        if len(vector_data) == 0:
-            raise HTTPException(
-                status_code=404, detail="Không nhận diện được biển số trong ảnh"
-            )
-        new_profile = Profile(name=name, license_plate_embedding=vector_data)
+        plate_number = license_plate_number.upper().strip()
+        if not plate_number:
+            raise ValueError("Biển số xe không được để trống")
+            
+        new_profile = Profile(name=name, license_plate_number=plate_number)
         db.add(new_profile)
         await db.commit()
 
@@ -83,6 +82,7 @@ async def get_all_profiles(
                 {
                     "id": p.id,
                     "name": p.name,
+                    "license_plate_number": p.license_plate_number,
                     "created_at": (
                         p.created_at.strftime("%Y-%m-%d %H:%M:%S")
                         if p.created_at

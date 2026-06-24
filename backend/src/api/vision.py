@@ -10,7 +10,7 @@ from shared.models import Camera
 from shared.schemas.camera import CameraStreamRequest, CameraUpdateRequest
 from shared.core import redis as redis_module
 
-from ..services.license_plate_extract_service import extract_license_plate_vector_service
+from ..services.license_plate_extract_service import extract_license_plate_service
 from ..services.mq_command import CommandPublisher
 from ..security.user_manage import User, admin_required, manager_required
 from ..services.mediamtx_client import mediamtx
@@ -30,11 +30,11 @@ async def is_in_cooldown(person_id: str, seconds=10):
 @router.post("/process-image")
 async def check_image_validity(file: UploadFile = File(...)):
     try:
-        vector = await extract_license_plate_vector_service(file)
+        plate_text = await extract_license_plate_service(file)
         return {
             "status": "success",
             "message": "Ảnh hợp lệ, đã tìm thấy biển số!",
-            "vector_preview": vector[:5],
+            "plate_text": plate_text,
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

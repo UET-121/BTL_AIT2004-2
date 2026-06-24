@@ -8,10 +8,7 @@ if [ ! -f "./src_models/license_plate_detection/yolov8.onnx" ]; then
     exit 1
 fi
 
-if [ ! -f "./src_models/license_plate_recognition/arcface.onnx" ]; then
-    echo "[FATAL LỖI] Thiếu file arcface.onnx trong src_models/license_plate_recognition/"
-    exit 1
-fi
+
 
 build_model() {
     local MODEL_PATH=$1
@@ -36,19 +33,26 @@ build_model() {
 
         SHAPE_STR=${SHAPE_STR#"SHAPES="}
 
-        IFS=';' read -r -a SHAPE_ARRAY <<< "$SHAPE_STR"
-        MIN_SHAPES="${SHAPE_ARRAY[0]}"
-        OPT_SHAPES="${SHAPE_ARRAY[1]}"
-        MAX_SHAPES="${SHAPE_ARRAY[2]}"
+        if [ "$SHAPE_STR" = "STATIC" ]; then
+            echo "   [!] Phát hiện model Static Shape, không sử dụng Dynamic Batching parameters"
+            trtexec --onnx="$MODEL_PATH" \
+                    --saveEngine="$OUTPUT_DIR/1/model.plan" \
+                    --fp16
+        else
+            IFS=';' read -r -a SHAPE_ARRAY <<< "$SHAPE_STR"
+            MIN_SHAPES="${SHAPE_ARRAY[0]}"
+            OPT_SHAPES="${SHAPE_ARRAY[1]}"
+            MAX_SHAPES="${SHAPE_ARRAY[2]}"
 
-        echo "   Đã tìm thấy Input Shapes: Min($MIN_SHAPES), Opt($OPT_SHAPES), Max($MAX_SHAPES)"
+            echo "   Đã tìm thấy Input Shapes: Min($MIN_SHAPES), Opt($OPT_SHAPES), Max($MAX_SHAPES)"
 
-        trtexec --onnx="$MODEL_PATH" \
-                --saveEngine="$OUTPUT_DIR/1/model.plan" \
-                --fp16 \
-                --minShapes="$MIN_SHAPES" \
-                --optShapes="$OPT_SHAPES" \
-                --maxShapes="$MAX_SHAPES"
+            trtexec --onnx="$MODEL_PATH" \
+                    --saveEngine="$OUTPUT_DIR/1/model.plan" \
+                    --fp16 \
+                    --minShapes="$MIN_SHAPES" \
+                    --optShapes="$OPT_SHAPES" \
+                    --maxShapes="$MAX_SHAPES"
+        fi
 
         echo "[V] Hoàn tất $MODEL_NAME!"
     else
@@ -57,4 +61,5 @@ build_model() {
 }
 
 build_model "./src_models/license_plate_detection/yolov8.onnx" "license_plate_detection" "./license_plate_detection"
-build_model "./src_models/license_plate_recognition/arcface.onnx" "license_plate_recognition" "./license_plate_recognition"
+build_model "./src_models/vehicle_detection/yolov8.onnx" "vehicle_detection" "./vehicle_detection"
+

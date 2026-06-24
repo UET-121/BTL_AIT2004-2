@@ -10,7 +10,7 @@ from shared.models import DetectionLog
 async def get_detection_logs(
     db: AsyncSession,
     camera_id: Optional[int] = None,
-    person_id: Optional[str] = None,
+    profile_id: Optional[str] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     skip: int = 0,
@@ -23,8 +23,8 @@ async def get_detection_logs(
     if camera_id is not None:
         conditions.append(DetectionLog.camera_id == camera_id)
 
-    if person_id:
-        conditions.append(DetectionLog.person_id.ilike(f"%{person_id}%"))
+    if profile_id:
+        conditions.append(DetectionLog.profile_id == str(profile_id))
 
     if start_time is not None:
         conditions.append(DetectionLog.create_at >= start_time)
