@@ -10,20 +10,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-plate_recognition}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-plate_recognition}" ]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6380:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
   api:
     build:
       context: ./apps/api
@@ -31,28 +22,49 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      minio:
+        condition: service_started
     ports:
       - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/plate_recognition}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       UPLOAD_DIR: /app/uploads
-      STORAGE_TYPE: local
+      STORAGE_TYPE: ${STORAGE_TYPE:-minio}
+      MINIO_URL: ${MINIO_URL:-http://minio:9000}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-uploads}
       CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
-
-  worker:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile
-    depends_on:
-      - db
-      - redis
+      PLATE_DETECTION_MODEL: ${PLATE_DETECTION_MODEL:-license_plate_detector.pt}
+      DEFAULT_PLATE_REGION: ${DEFAULT_PLATE_REGION:-GB}
+      OCR_GPU: "true"
+      USE_ONNX_INFERENCE: "true"
+      ONNX_MODEL_PATH: "models/onnx/yolov8-plate-v1.onnx"
+      # Reduce PyTorch/MKL thread context-switching overhead inside Docker CPU
+      OMP_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      VECLIB_MAXIMUM_THREADS: 1
+      NUMEXPR_NUM_THREADS: 1
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/plate_recognition}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-    command: ["sh", "-c", "celery -A app.worker.celery_app.celery_app worker --loglevel=info --concurrency=1"]
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    command: server /data --console-address ":9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   frontend:
     build:
@@ -63,8 +75,11 @@ services:
     ports:
       - "5173:5173"
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: ""
+      BACKEND_PROXY_TARGET: "http://api:8000"
       VITE_USE_DEMO_DATA: "false"
 
 volumes:
   pgdata:
+  miniodata:
+

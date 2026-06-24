@@ -10,7 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Install PyTorch with CUDA support (standard version from PyPI has built-in CUDA compatibility)
+RUN pip install --no-cache-dir --default-timeout=1000 torch torchvision
+RUN pip install --no-cache-dir --default-timeout=1000 -r /app/requirements.txt
 
 COPY . /app
 

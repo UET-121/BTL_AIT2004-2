@@ -26,6 +26,12 @@ class Settings(BaseSettings):
         default="local", alias="STORAGE_TYPE"
     )
     upload_dir: str = Field(default="uploads", alias="UPLOAD_DIR")
+    minio_url: str = Field(default="http://localhost:9000", alias="MINIO_URL")
+    minio_public_url: str = Field(default="http://localhost:9000", alias="MINIO_PUBLIC_URL")
+    minio_access_key: str = Field(default="minioadmin", alias="MINIO_ACCESS_KEY")
+    minio_secret_key: str = Field(default="minioadmin", alias="MINIO_SECRET_KEY")
+    minio_bucket: str = Field(default="uploads", alias="MINIO_BUCKET")
+
 
     # CORS
     cors_origins: list[str] = Field(
@@ -41,6 +47,8 @@ class Settings(BaseSettings):
     onnx_model_path: str = Field(
         default="models/onnx/yolov8-plate-v1.onnx", alias="ONNX_MODEL_PATH"
     )
+    detection_decimation: int = Field(default=2, alias="DETECTION_DECIMATION")
+
 
     # OCR
     ocr_min_confidence: float = Field(default=0.3, alias="OCR_MIN_CONFIDENCE")
@@ -62,11 +70,6 @@ class Settings(BaseSettings):
     log_format: Literal["json", "text"] = Field(default="text", alias="LOG_FORMAT")
     debug: bool = Field(default=False, alias="DEBUG")
 
-    # Worker
-    fail_fast_on_missing_model: bool = Field(
-        default=False, alias="FAIL_FAST_ON_MISSING_MODEL"
-    )
-
     app_version: str = "1.0.0"
 
     @field_validator("cors_origins", mode="before")
@@ -79,10 +82,6 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return value
         raise ValueError("CORS_ORIGINS must be a JSON array or list")
-
-    @property
-    def database_url_sync(self) -> str:
-        return self.database_url.replace("+asyncpg", "")
 
 
 @lru_cache

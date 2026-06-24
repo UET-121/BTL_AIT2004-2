@@ -65,9 +65,34 @@ export async function uploadRecognition(file: File) {
 
   return (await response.json()) as RecognitionSubmitResponse
 }
+export async function deleteRecognition(requestId: string) {
+  const response = await fetch(`${baseUrl}/api/v1/recognition/${requestId}`, {
+    method: 'DELETE',
+  })
 
-export async function reprocessRecognition(requestId: string) {
-  return requestJson<RecognitionSubmitResponse>(`/api/v1/recognition/${requestId}/reprocess`, {
+  if (!response.ok) {
+    const error = new Error(await readError(response)) as ApiError
+    error.status = response.status
+    error.detail = error.message
+    throw error
+  }
+}
+
+export async function startStream(source: string) {
+  return requestJson<{ status: string; source: string | null; error_message: string | null }>('/api/v1/streams/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source }),
+  })
+}
+
+export async function stopStream() {
+  return requestJson<{ status: string; source: string | null; error_message: string | null }>('/api/v1/streams/stop', {
     method: 'POST',
   })
 }
+
+export async function getStreamStatus() {
+  return requestJson<{ status: string; source: string | null; error_message: string | null }>('/api/v1/streams/status')
+}
+

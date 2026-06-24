@@ -12,13 +12,13 @@ async def test_health(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_upload_valid_png(client: AsyncClient, sample_png_bytes: bytes):
-    files = {"file": ("plate.png", sample_png_bytes, "image/png")}
+async def test_upload_valid_video(client: AsyncClient):
+    files = {"file": ("video.mp4", b"fake video bytes", "video/mp4")}
     response = await client.post("/api/v1/recognition", files=files)
     assert response.status_code == 200
     data = response.json()
     assert "request_id" in data
-    assert data["status"] == "NOT_STARTED"
+    assert data["status"] == "PENDING"
 
 
 @pytest.mark.asyncio
@@ -26,14 +26,14 @@ async def test_upload_invalid_pdf(client: AsyncClient):
     files = {"file": ("doc.pdf", b"%PDF-1.4 fake", "application/pdf")}
     response = await client.post("/api/v1/recognition", files=files)
     assert response.status_code == 400
-    assert "image" in response.json()["detail"].lower()
+    assert "video" in response.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
-async def test_get_by_id(client: AsyncClient, sample_jpeg_bytes: bytes):
+async def test_get_by_id(client: AsyncClient):
     upload = await client.post(
         "/api/v1/recognition",
-        files={"file": ("plate.jpg", sample_jpeg_bytes, "image/jpeg")},
+        files={"file": ("video.mp4", b"fake video bytes", "video/mp4")},
     )
     request_id = upload.json()["request_id"]
 
@@ -41,7 +41,7 @@ async def test_get_by_id(client: AsyncClient, sample_jpeg_bytes: bytes):
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == request_id
-    assert data["image_url"].startswith("/uploads/")
+    assert data["image_url"].startswith("/uploads/") or "uploads" in data["image_url"]
 
 
 @pytest.mark.asyncio
@@ -53,11 +53,11 @@ async def test_get_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_list_pagination(client: AsyncClient, sample_png_bytes: bytes):
+async def test_list_pagination(client: AsyncClient):
     for i in range(3):
         await client.post(
             "/api/v1/recognition",
-            files={"file": (f"p{i}.png", sample_png_bytes, "image/png")},
+            files={"file": (f"v{i}.mp4", b"fake video bytes", "video/mp4")},
         )
 
     response = await client.get("/api/v1/recognition?page=1&page_size=2")
@@ -68,8 +68,25 @@ async def test_list_pagination(client: AsyncClient, sample_png_bytes: bytes):
     assert data["total_pages"] >= 2
 
 
+
 @pytest.mark.asyncio
-async def test_reprocess_invalid_status(client: AsyncClient, sample_png_bytes: bytes, db_session):
+async def test_delete_request(client: AsyncClient):
+    upload = await client.post(
+        "/api/v1/recognition",
+        files={"file": ("video.mp4", b"fake video bytes", "video/mp4")},
+    )
+    request_id = upload.json()["request_id"]
+
+    response = await client.delete(f"/api/v1/recognition/{request_id}")
+    assert response.status_code == 204
+    assert response.content == b""
+
+    get_response = await client.get(f"/api/v1/recognition/{request_id}")
+    assert get_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_completed_request(client: AsyncClient, db_session):
     from app.models.recognition import RecognitionRequest, RecognitionStatus
     import uuid
 
@@ -82,26 +99,17 @@ async def test_reprocess_invalid_status(client: AsyncClient, sample_png_bytes: b
     db_session.add(record)
     await db_session.commit()
 
-    response = await client.post(f"/api/v1/recognition/{record.id}/reprocess")
-    assert response.status_code == 400
+    response = await client.delete(f"/api/v1/recognition/{record.id}")
+    assert response.status_code == 204
+
+    get_response = await client.get(f"/api/v1/recognition/{record.id}")
+    assert get_response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_reprocess_needs_review(client: AsyncClient, sample_png_bytes: bytes, db_session):
-    from app.models.recognition import RecognitionRequest, RecognitionStatus
-    import uuid
-
-    record = RecognitionRequest(
-        id=uuid.uuid4(),
-        image_url="/uploads/test.png",
-        status=RecognitionStatus.NEEDS_REVIEW,
-        plate_number="ABC1D23",
-        needs_review=True,
+async def test_delete_request_not_found(client: AsyncClient):
+    response = await client.delete(
+        "/api/v1/recognition/550e8400-e29b-41d4-a716-446655440000"
     )
-    db_session.add(record)
-    await db_session.commit()
-
-    response = await client.post(f"/api/v1/recognition/{record.id}/reprocess")
-    assert response.status_code == 200
-    assert response.json()["status"] == "NOT_STARTED"
+    assert response.status_code == 404
 

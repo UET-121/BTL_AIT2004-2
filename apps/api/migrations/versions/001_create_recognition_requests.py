@@ -23,7 +23,7 @@ recognition_status = postgresql.ENUM(
     "NEEDS_REVIEW",
     "FAILED",
     name="recognition_status",
-    create_type=True,
+    create_type=False,
 )
 
 

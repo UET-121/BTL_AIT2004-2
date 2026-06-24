@@ -6,10 +6,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from redis.asyncio import Redis
 from sqlalchemy import text
 
-from app.api.routes import router as recognition_router
+from app.api.routes import router as recognition_router, streams_router, ws_router
+from app.logger import configure_logging
 from app.models.schemas import HealthResponse
 from app.shared.config import get_settings
 from app.shared.database import engine
@@ -18,20 +18,21 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def _configure_logging() -> None:
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _configure_logging()
+    configure_logging()
+    
+    # Eager-load ML models at application startup to reduce latency on first frame
+    from app.services.factories import preload_ml_components
+    preload_ml_components()
+
     upload_path = Path(settings.upload_dir)
     upload_path.mkdir(parents=True, exist_ok=True)
     logger.info("Application startup complete; upload_dir=%s", upload_path)
     yield
+    # Stop any active streams on application shutdown to release capture devices
+    from app.realtime.manager import stream_manager
+    stream_manager.stop_stream()
     await engine.dispose()
     logger.info("Application shutdown complete")
 
@@ -52,6 +53,9 @@ app.add_middleware(
 )
 
 app.include_router(recognition_router)
+app.include_router(streams_router)
+app.include_router(ws_router)
+
 
 upload_path = Path(settings.upload_dir)
 upload_path.mkdir(parents=True, exist_ok=True)
@@ -67,7 +71,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 async def health_check() -> HealthResponse:
     db_status = "connected"
-    redis_status = "connected"
 
     try:
         async with engine.connect() as conn:
@@ -76,18 +79,10 @@ async def health_check() -> HealthResponse:
         logger.warning("DB health check failed: %s", exc)
         db_status = "disconnected"
 
-    try:
-        redis = Redis.from_url(settings.redis_url)
-        await redis.ping()
-        await redis.aclose()
-    except Exception as exc:
-        logger.warning("Redis health check failed: %s", exc)
-        redis_status = "disconnected"
-
-    overall = "ok" if db_status == "connected" and redis_status == "connected" else "degraded"
+    overall = "ok" if db_status == "connected" else "degraded"
     return HealthResponse(
         status=overall,
         db=db_status,
-        redis=redis_status,
+        redis=None,
         version=settings.app_version,
     )

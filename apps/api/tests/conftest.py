@@ -1,6 +1,26 @@
 import io
 import os
+import sys
+
+# Default to local storage for integration testing to prevent MinIO client exceptions
+os.environ["STORAGE_TYPE"] = "local"
+os.environ["UPLOAD_DIR"] = "test_uploads"
+
 from collections.abc import AsyncGenerator
+from unittest.mock import MagicMock
+
+# Dynamically mock the minio module to allow running tests without installing it
+class MockMinio:
+    def __init__(self, *args, **kwargs):
+        pass
+    def bucket_exists(self, *args, **kwargs):
+        return True
+    def make_bucket(self, *args, **kwargs):
+        pass
+
+mock_minio = MagicMock()
+mock_minio.Minio = MockMinio
+sys.modules['minio'] = mock_minio
 
 import pytest
 import pytest_asyncio
@@ -40,21 +60,6 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
     session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
     async with session_factory() as session:
         yield session
-
-
-@pytest.fixture(autouse=True)
-def mock_celery_task(monkeypatch):
-    class _FakeResult:
-        id = "test-task-id"
-
-    def _fake_delay(*_args, **_kwargs):
-        return _FakeResult()
-
-    monkeypatch.setattr(
-        "app.worker.tasks.process_plate_recognition.delay",
-        _fake_delay,
-    )
-
 
 @pytest_asyncio.fixture
 async def client(db_engine) -> AsyncGenerator[AsyncClient, None]:

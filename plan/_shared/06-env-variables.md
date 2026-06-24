@@ -17,99 +17,58 @@ Tổng hợp biến môi trường cho tất cả nhánh. Nguồn: [`apps/api/.e
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | — | Async PostgreSQL URL. Format: `postgresql+asyncpg://user:pass@host:5432/dbname` |
-| | | `postgresql+asyncpg://postgres:postgres@localhost:5432/plate_recognition` | Local dev |
+| | | `postgresql+asyncpg://postgres:postgres@localhost:5433/plate_recognition` | Local dev (port 5433 host) |
 | | | `postgresql+asyncpg://postgres:postgres@db:5432/plate_recognition` | Docker compose |
-
-### Redis / Celery
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `REDIS_URL` | Yes | `redis://localhost:6379/0` | Celery broker URL |
-| | | `redis://redis:6379/0` | Docker compose |
 
 ### Storage
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `STORAGE_TYPE` | Yes | `local` | `local`, `minio`, `s3`, `supabase` |
+| `STORAGE_TYPE` | Yes | `minio` | `local` hoặc `minio` |
 | `UPLOAD_DIR` | Yes | `uploads` | Local upload directory |
 | | | `/app/uploads` | Docker container path |
 
-### AWS S3 (optional)
+### MinIO (Required when STORAGE_TYPE=minio)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `AWS_ACCESS_KEY_ID` | If S3 | — | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | If S3 | — | AWS secret key |
-| `AWS_BUCKET_NAME` | If S3 | — | S3 bucket name |
-| `AWS_REGION` | If S3 | `us-east-1` | AWS region |
-
-### Supabase (optional)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `SUPABASE_URL` | If Supabase | — | Supabase project URL |
-| `SUPABASE_KEY` | If Supabase | — | Supabase anon/service key |
-| `SUPABASE_BUCKET` | If Supabase | — | Storage bucket name |
-
-### MinIO (optional — Sprint 3 stretch)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MINIO_URL` | If MinIO | `http://localhost:9000` | MinIO endpoint |
-| `MINIO_ACCESS_KEY` | If MinIO | `minioadmin` | MinIO access key |
-| `MINIO_SECRET_KEY` | If MinIO | `minioadmin` | MinIO secret key |
-| `MINIO_BUCKET` | If MinIO | `uploads` | MinIO bucket name |
+| `MINIO_URL` | Yes | `http://localhost:9000` (host) hoặc `http://minio:9000` (Docker) | MinIO endpoint |
+| `MINIO_PUBLIC_URL` | Yes | `http://localhost:9000` | Public URL for media access |
+| `MINIO_ACCESS_KEY` | Yes | `minioadmin` | MinIO root/access key |
+| `MINIO_SECRET_KEY` | Yes | `minioadmin` | MinIO root/secret key |
+| `MINIO_BUCKET` | Yes | `uploads` | MinIO bucket name |
 
 ### CORS
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CORS_ORIGINS` | Yes | `["http://localhost:5173", "http://localhost:3000"]` | JSON array of allowed origins |
+| `CORS_ORIGINS` | Yes | `["http://localhost:5173", "http://127.0.0.1:5173"]` | JSON array of allowed origins |
 
 ### Recognition — Detection
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `USE_PLATE_DETECTION` | No | `true` | Enable YOLO plate detection |
-| `PLATE_DETECTION_MODEL` | No | `yolov8n.pt` | Path to YOLO weights |
-| `PLATE_DETECTION_CONFIDENCE` | No | `0.5` | Minimum detection confidence |
-| `USE_ONNX_INFERENCE` | No | `false` | Use ONNX Runtime instead of PyTorch (Sprint 4+) |
+| `PLATE_DETECTION_MODEL` | No | `license_plate_detector.pt` | Path to YOLO weights |
+| `USE_ONNX_INFERENCE` | No | `true` | Use ONNX Runtime for inference |
 | `ONNX_MODEL_PATH` | If ONNX | `models/onnx/yolov8-plate-v1.onnx` | Path to ONNX model |
 
 ### Recognition — OCR
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `OCR_MIN_CONFIDENCE` | No | `0.3` | Minimum OCR character confidence |
 | `OCR_GPU` | No | `false` | Enable GPU for EasyOCR |
-
-### Recognition — Confidence Thresholds
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NEEDS_REVIEW_THRESHOLD` | No | `0.6` | Below → `NEEDS_REVIEW` status |
-| `AUTO_ACCEPT_THRESHOLD` | No | `0.85` | Above → auto `COMPLETED` |
-
-### Recognition — Retry
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ENABLE_ENHANCED_RETRY` | No | `true` | Retry with different preprocessing |
-| `MAX_PROCESSING_ATTEMPTS` | No | `3` | Max pipeline attempts per request |
 
 ### Recognition — Validation
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DEFAULT_PLATE_REGION` | No | `BR` | Plate format region code |
+| `DEFAULT_PLATE_REGION` | No | `GB` | Plate format region code (e.g. `GB` or `BR`) |
 
-### Logging & Debug (Sprint 2+)
+### Logging & Debug
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LOG_LEVEL` | No | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `LOG_FORMAT` | No | `json` | `json` or `text` |
 | `DEBUG` | No | `false` | Enable debug mode |
 
 ---
@@ -149,13 +108,19 @@ POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 POSTGRES_DB=plate_recognition
 
-# Backend — see apps/api/.env.example for full list
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/plate_recognition
-REDIS_URL=redis://localhost:6379/0
-STORAGE_TYPE=local
+# Backend — apps/api
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/plate_recognition
+STORAGE_TYPE=minio
 UPLOAD_DIR=uploads
-CORS_ORIGINS=["http://localhost:5173", "http://localhost:3000"]
+CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]
 LOG_LEVEL=INFO
+
+# MinIO
+MINIO_PUBLIC_URL=http://localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=uploads
+OCR_GPU=false
 
 # Frontend
 VITE_API_URL=
@@ -166,7 +131,7 @@ VITE_API_URL=
 ```bash
 cp .env.example .env
 cp apps/api/.env.example apps/api/.env
-cp apps/web/.env.example apps/web/.env   # create in Sprint 0
+cp frontend/.env.example frontend/.env
 ```
 
 ---
@@ -175,10 +140,9 @@ cp apps/web/.env.example apps/web/.env   # create in Sprint 0
 
 | Category | Owner track | Reviewers |
 |----------|-------------|-----------|
-| DATABASE_*, REDIS_* | DevOps | Backend |
+| DATABASE_* | DevOps | Backend |
 | STORAGE_*, MINIO_* | DevOps + Backend | — |
 | CORS_* | Backend | Frontend, DevOps |
-| USE_PLATE_*, OCR_*, ONNX_* | AI Engineer | Backend |
-| NEEDS_REVIEW_*, AUTO_ACCEPT_* | AI Engineer | Backend |
+| PLATE_DETECTION_*, OCR_*, ONNX_* | AI Engineer | Backend |
 | VITE_* | Frontend | DevOps |
 | LOG_* | DevOps | Backend |

@@ -1,5 +1,4 @@
 import logging
-from dataclasses import dataclass, field
 from functools import lru_cache
 
 from app.services.detection.detector import PlateDetector
@@ -16,7 +15,16 @@ logger = logging.getLogger(__name__)
 def get_detector() -> PlateDetector:
     settings = get_settings()
     if settings.use_onnx_inference:
-        logger.info("ONNX inference requested; falling back to YOLO until ONNX detector is wired")
+        try:
+            from app.services.detection.onnx_detector import OnnxPlateDetector
+            detector = OnnxPlateDetector(settings)
+            if detector.is_loaded():
+                logger.info("Successfully loaded and initialized ONNX Plate Detector")
+                return detector
+            else:
+                logger.warning("ONNX detector models failed to load. Falling back to PyTorch YOLO.")
+        except Exception as exc:
+            logger.error("Failed to initialize ONNX detector: %s. Falling back to PyTorch YOLO.", exc)
     return YoloPlateDetector(settings)
 
 

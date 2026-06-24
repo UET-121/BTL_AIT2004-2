@@ -15,17 +15,19 @@ import {
   RotateCcw,
   Search,
   UploadCloud,
+  Trash2,
   X,
   ZoomIn,
 } from 'lucide-react'
-import { demoRequests } from './demo-data'
-import { getApiBaseUrl, getRecognition, listRecognitions, reprocessRecognition, uploadRecognition } from './api'
+import { deleteRecognition, getApiBaseUrl, getRecognition, listRecognitions, uploadRecognition } from './api'
 import type { BoundingBox, RecognitionRequest, RecognitionStatus, RecognitionSubmitResponse, UiRequest } from './types'
+import LivePage from './live/LivePage'
 import { isTerminalStatus } from './types'
 
 type RouteState =
   | { view: 'home' }
   | { view: 'detail'; id: string }
+  | { view: 'live' }
   | { view: 'not-found' }
 
 type LoadMode = 'api' | 'demo'
@@ -33,8 +35,26 @@ type ToastState = { message: string; kind: 'success' | 'warning' | 'error' } | n
 
 const PAGE_SIZES = [5, 10, 20]
 const POLL_MS = 2000
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024
-const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png'])
+const MAX_MEDIA_SIZE = 250 * 1024 * 1024
+const ALLOWED_TYPES = new Set(['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'])
+const MEDIA_VIDEO_RE = /\.(mp4|avi|mov|mpeg|mkv)(?:$|\?)/i
+
+function resolveMediaUrl(url: string) {
+  if (!url) return url
+  if (/^(https?:|data:|blob:|\/\/)/i.test(url)) return url
+  if (url.startsWith('/')) {
+    const apiBase = getApiBaseUrl()
+    if (apiBase && apiBase !== 'same-origin proxy') {
+      return new URL(url, apiBase).toString()
+    }
+  }
+  return url
+}
+
+function isVideoMedia(url: string) {
+  return MEDIA_VIDEO_RE.test(url)
+}
+
 
 const statusLabel: Record<RecognitionStatus, string> = {
   NOT_STARTED: 'Chưa bắt đầu',
@@ -72,8 +92,8 @@ function formatShortId(id: string) {
   return `#${id.slice(0, 8)}`
 }
 
-function isAllowedImage(file: File) {
-  return ALLOWED_TYPES.has(file.type)
+function isAllowedMedia(file: File) {
+  return ALLOWED_TYPES.has(file.type) || file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
 }
 
 function makeObjectUrl(file: Blob) {
@@ -81,13 +101,16 @@ function makeObjectUrl(file: Blob) {
 }
 
 function normalizeRequest(item: RecognitionRequest): UiRequest {
+  const mediaUrl = resolveMediaUrl(item.image_url)
+  const isVideo = isVideoMedia(mediaUrl)
   return {
     ...item,
-    media_type: 'image',
-    media_url: item.image_url,
-    thumbnail_url: item.image_url,
+    media_type: isVideo ? 'video' : 'image',
+    media_url: mediaUrl,
+    thumbnail_url: mediaUrl,
   }
 }
+
 
 function statusBadge(status: RecognitionStatus) {
   return (
@@ -116,91 +139,34 @@ function terminal(status: RecognitionStatus) {
 function currentRoute(): RouteState {
   const path = window.location.pathname
   if (path === '/' || path === '') return { view: 'home' }
+  if (path === '/live') return { view: 'live' }
   const match = path.match(/^\/requests\/([^/]+)$/)
   if (match) return { view: 'detail', id: decodeURIComponent(match[1]) }
   return { view: 'not-found' }
 }
 
 function navigate(route: RouteState) {
-  const path = route.view === 'home' ? '/' : route.view === 'detail' ? `/requests/${encodeURIComponent(route.id)}` : '/404'
+  const path = route.view === 'home' ? '/' : route.view === 'live' ? '/live' : route.view === 'detail' ? `/requests/${encodeURIComponent(route.id)}` : '/404'
   window.history.pushState({}, '', path)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-function loadImage(src: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => resolve(image)
-    image.onerror = () => reject(new Error('Không tải được ảnh crop'))
-    image.src = src
-  })
-}
-
-async function createCroppedImage(file: File, zoom: number) {
-  const objectUrl = makeObjectUrl(file)
-  try {
-    const image = await loadImage(objectUrl)
-    const ratio = 3 / 1
-    const sourceRatio = image.width / image.height
-
-    let cropWidth = image.width / zoom
-    let cropHeight = image.height / zoom
-
-    if (sourceRatio > ratio) {
-      cropHeight = image.height / zoom
-      cropWidth = cropHeight * ratio
-    } else {
-      cropWidth = image.width / zoom
-      cropHeight = cropWidth / ratio
-    }
-
-    cropWidth = Math.min(cropWidth, image.width)
-    cropHeight = Math.min(cropHeight, image.height)
-
-    const sx = Math.max(0, (image.width - cropWidth) / 2)
-    const sy = Math.max(0, (image.height - cropHeight) / 2)
-
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(cropWidth))
-    canvas.height = Math.max(1, Math.round(cropHeight))
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('Trình duyệt không hỗ trợ canvas')
-
-    ctx.drawImage(image, sx, sy, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height)
-
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((value) => {
-        if (value) resolve(value)
-        else reject(new Error('Không thể tạo file crop'))
-      }, 'image/jpeg', 0.92)
-    })
-
-    const previewUrl = makeObjectUrl(blob)
-    const output = new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'upload'}.jpg`, {
-      type: 'image/jpeg',
-    })
-
-    return { file: output, previewUrl }
-  } finally {
-    URL.revokeObjectURL(objectUrl)
-  }
-}
+// Removed crop/image functions since we only support video now
 
 function AppShell({ children }: { children: ReactNode }) {
   return <div className="min-h-screen bg-background text-foreground">{children}</div>
 }
 
 function Header({
-  mode,
   onRefresh,
   onToggleTheme,
   processingCount,
+  refreshing,
 }: {
-  mode: LoadMode
-  onRefresh: () => void
+  onRefresh: () => void | Promise<void>
   onToggleTheme: () => void
   processingCount: number
+  refreshing: boolean
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-border/80 bg-background/95 backdrop-blur">
@@ -215,7 +181,7 @@ function Header({
           </div>
           <div>
             <p className="text-sm font-semibold leading-tight">License Plate Admin</p>
-            <p className="font-mono text-[11px] text-muted-foreground">Frontend SPA · {mode === 'api' ? 'backend connected' : 'demo fallback'}</p>
+            <p className="font-mono text-[11px] text-muted-foreground">HyperCan Team</p>
           </div>
         </button>
 
@@ -227,11 +193,12 @@ function Header({
           <button
             type="button"
             onClick={onRefresh}
-            className="inline-flex size-10 items-center justify-center border border-border bg-card transition hover:bg-secondary"
+            disabled={refreshing}
+            className="inline-flex size-10 items-center justify-center border border-border bg-card transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
             aria-label="Refresh"
             title="Refresh"
           >
-            <RefreshCcw size={16} />
+            <RefreshCcw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
           <button
             type="button"
@@ -257,8 +224,6 @@ function UploadPanel({
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState('')
   const [previewUrl, setPreviewUrl] = useState('')
-  const [cropOpen, setCropOpen] = useState(false)
-  const [zoom, setZoom] = useState(1)
   const [busyLocal, setBusyLocal] = useState(false)
 
   useEffect(() => {
@@ -270,44 +235,26 @@ function UploadPanel({
   const reset = () => {
     setFile(null)
     setError('')
-    setCropOpen(false)
-    setZoom(1)
   }
 
   const pick = (picked?: File) => {
     setError('')
     setFile(null)
-    setCropOpen(false)
     if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
     setPreviewUrl('')
     if (!picked) return
-    if (!isAllowedImage(picked)) {
-      setError('Chỉ chấp nhận JPG hoặc PNG.')
+    if (!isAllowedMedia(picked)) {
+      setError('Chỉ chấp nhận video MP4/AVI/MOV/MKV.')
       return
     }
-    if (picked.size > MAX_IMAGE_SIZE) {
-      setError('Ảnh vượt quá 10MB.')
+    if (picked.size > MAX_MEDIA_SIZE) {
+      setError('File vượt quá 250MB.')
       return
     }
     if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
     const nextPreview = makeObjectUrl(picked)
     setFile(picked)
     setPreviewUrl(nextPreview)
-    setCropOpen(true)
-  }
-
-  const confirm = async () => {
-    if (!file) return
-    setBusyLocal(true)
-    try {
-      const cropped = await createCroppedImage(file, zoom)
-      await onSubmit(cropped)
-      reset()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload thất bại')
-    } finally {
-      setBusyLocal(false)
-    }
   }
 
   return (
@@ -316,7 +263,7 @@ function UploadPanel({
         <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
           <button
             type="button"
-            aria-label="Kéo thả hoặc chọn ảnh biển số"
+            aria-label="Kéo thả hoặc chọn video biển số"
             disabled={busy || busyLocal}
             onClick={() => inputRef.current?.click()}
             onDrop={(event) => {
@@ -329,7 +276,7 @@ function UploadPanel({
             <input
               ref={inputRef}
               type="file"
-              accept="image/jpeg,image/png"
+              accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska"
               className="hidden"
               onChange={(event) => pick(event.target.files?.[0])}
             />
@@ -338,8 +285,8 @@ function UploadPanel({
                 <UploadCloud size={22} />
               </div>
               <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Upload ảnh biển số</h2>
-                <p className="text-sm text-muted-foreground">JPG/PNG tối đa 10MB. Crop trung tâm 3:1 trước khi gửi.</p>
+                <h2 className="text-lg font-semibold">Upload video biển số</h2>
+                <p className="text-sm text-muted-foreground">MP4/AVI/MOV/MKV tối đa 250MB.</p>
                 {file && (
                   <p className="inline-flex items-center gap-1.5 text-sm text-accent">
                     <FileImage size={13} />
@@ -359,73 +306,27 @@ function UploadPanel({
             <button
               type="button"
               disabled={!file || busy || busyLocal}
-              onClick={() => setCropOpen(true)}
+              onClick={async () => {
+                if (file) {
+                  setBusyLocal(true)
+                  try {
+                    await onSubmit({ file, previewUrl })
+                    reset()
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Upload thất bại')
+                  } finally {
+                    setBusyLocal(false)
+                  }
+                }
+              }}
               className="inline-flex w-full items-center justify-center gap-2 bg-accent px-4 py-2.5 font-semibold text-accent-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy || busyLocal ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-              {busy || busyLocal ? 'Đang upload...' : 'Crop & Upload'}
+              {busy || busyLocal ? 'Đang upload...' : 'Upload Video'}
             </button>
           </div>
         </div>
       </div>
-
-      {cropOpen && file && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') setCropOpen(false)
-          }}
-          className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4"
-        >
-          <div className="w-full max-w-2xl border border-border bg-card p-4 shadow-2xl">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <h3 className="font-semibold">Crop ảnh 3:1</h3>
-                <p className="text-sm text-muted-foreground">Phóng to/thu nhỏ trước khi gửi lên backend.</p>
-              </div>
-              <button type="button" onClick={() => setCropOpen(false)} className="p-2 hover:bg-secondary" aria-label="Đóng">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="relative mx-auto aspect-[3/1] max-h-80 overflow-hidden border border-accent bg-black">
-              {previewUrl && <img src={previewUrl} alt="Preview" className="h-full w-full object-cover" style={{ transform: `scale(${zoom})` }} />}
-              <div className="absolute inset-4 border-2 border-accent">
-                <span className="bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground">3:1</span>
-              </div>
-            </div>
-
-            <label className="mt-4 block text-sm">
-              Zoom
-              <input
-                type="range"
-                min="1"
-                max="2"
-                step="0.05"
-                value={zoom}
-                onChange={(event) => setZoom(Number(event.target.value))}
-                className="mt-2 w-full"
-              />
-            </label>
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className="border border-border px-4 py-2 hover:bg-secondary" onClick={() => setCropOpen(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={busy || busyLocal}
-                onClick={confirm}
-                className="inline-flex items-center gap-2 bg-primary px-4 py-2 text-primary-foreground disabled:opacity-60"
-              >
-                {busy || busyLocal ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                Confirm
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   )
 }
@@ -445,7 +346,7 @@ function EmptyState() {
     <div className="border border-border bg-card p-10 text-center">
       <FileImage className="mx-auto text-muted-foreground" />
       <h3 className="mt-3 font-semibold">Chưa có dữ liệu nhận diện</h3>
-      <p className="text-sm text-muted-foreground">Upload một ảnh biển số để bắt đầu luồng kiểm thử.</p>
+      <p className="text-sm text-muted-foreground">Upload một video để bắt đầu luồng nhận diện.</p>
     </div>
   )
 }
@@ -459,16 +360,88 @@ function NetworkBanner({ message }: { message: string }) {
   )
 }
 
+function DeleteConfirmDialog({
+  item,
+  onCancel,
+  onConfirm,
+  busy,
+}: {
+  item: UiRequest
+  onCancel: () => void
+  onConfirm: () => void
+  busy: boolean
+}) {
+  return (
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
+      <div className="w-full max-w-md border border-border bg-card p-5 shadow-2xl">
+        <h3 className="font-semibold">Xóa mẫu này?</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Mẫu <span className="font-mono">{formatShortId(item.id)}</span> sẽ bị xóa khỏi database và storage, bất kể đang ở trạng thái nào.
+        </p>
+        <div className="mt-4 rounded border border-border bg-background px-3 py-2 text-sm">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-muted-foreground">Trạng thái</span>
+            <span className="font-mono">{item.status}</span>
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-4">
+            <span className="text-muted-foreground">Biển số</span>
+            <span className="font-mono">{item.plate_number || '—'}</span>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="border border-border px-4 py-2 hover:bg-secondary" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 border border-red-400/20 bg-red-500/10 px-4 py-2 text-red-100 hover:bg-red-500/20 disabled:opacity-60"
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            <Trash2 size={16} /> {busy ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function RequestThumb({ item }: { item: UiRequest }) {
   const [broken, setBroken] = useState(false)
-  const src = item.thumbnail_url || item.media_url
+  const [hovered, setHovered] = useState(false)
+  const src = resolveMediaUrl(item.thumbnail_url || item.media_url)
+  const isVideo = isVideoMedia(src)
 
   return (
-    <div className="relative overflow-hidden bg-secondary">
+    <div
+      className="relative h-full w-full overflow-hidden bg-secondary transition-colors duration-200"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {broken ? (
         <div className="grid h-full w-full place-items-center text-muted-foreground">
           <FileImage size={22} />
         </div>
+      ) : isVideo ? (
+        hovered ? (
+          <video
+            src={src}
+            className="h-full w-full object-cover"
+            muted
+            playsInline
+            autoPlay
+            loop
+            preload="metadata"
+            onError={() => setBroken(true)}
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-slate-800 text-slate-400">
+            <Camera size={18} />
+            <span className="font-mono text-[9px] uppercase tracking-wider bg-slate-900/60 px-1 py-0.5 rounded text-slate-300">
+              Video
+            </span>
+          </div>
+        )
       ) : (
         <img src={src} onError={() => setBroken(true)} alt="Thumbnail" className="h-full w-full object-cover" />
       )}
@@ -481,10 +454,12 @@ function RequestList({
   loading,
   items,
   onOpen,
+  onDelete,
 }: {
   loading: boolean
   items: UiRequest[]
   onOpen: (id: string) => void
+  onDelete: (item: UiRequest) => void
 }) {
   if (loading) return <ListSkeleton />
   if (!items.length) return <EmptyState />
@@ -494,11 +469,12 @@ function RequestList({
       <table className="hidden w-full text-sm md:table">
         <thead className="bg-secondary text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th className="p-3">Ảnh</th>
+            <th className="p-3">Phương tiện</th>
             <th className="px-3">Trạng thái</th>
             <th className="px-3">Biển số</th>
             <th className="px-3">Thời gian</th>
             <th className="pr-3 text-right">Mở</th>
+            <th className="pr-3 text-right">Xóa</th>
           </tr>
         </thead>
         <tbody>
@@ -515,6 +491,20 @@ function RequestList({
               <td className="pr-3 text-right">
                 <Eye className="inline" size={17} />
               </td>
+              <td className="pr-3 text-right">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onDelete(item)
+                  }}
+                  className="inline-flex items-center gap-1 rounded border border-red-400/20 bg-red-500/10 px-2 py-1 text-xs text-red-100 hover:bg-red-500/20"
+                  aria-label={`Delete ${item.id}`}
+                  title="Delete"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -522,7 +512,19 @@ function RequestList({
 
       <div className="divide-y divide-border md:hidden">
         {items.map((item) => (
-          <button key={item.id} type="button" onClick={() => onOpen(item.id)} className="flex w-full gap-3 p-3 text-left">
+          <div
+            key={item.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpen(item.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onOpen(item.id)
+              }
+            }}
+            className="flex w-full gap-3 p-3 text-left"
+          >
             <div className="h-16 w-24 shrink-0 overflow-hidden border border-border">
               <RequestThumb item={item} />
             </div>
@@ -533,7 +535,19 @@ function RequestList({
               <p className="mt-1.5 truncate font-mono font-semibold">{item.plate_number || formatShortId(item.id)}</p>
               <p className="text-xs text-muted-foreground">{formatDate(item.created_at)}</p>
             </div>
-          </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                onDelete(item)
+              }}
+              className="ml-auto inline-flex h-9 shrink-0 items-center justify-center rounded border border-red-400/20 bg-red-500/10 px-2 text-red-100 hover:bg-red-500/20"
+              aria-label={`Delete ${item.id}`}
+              title="Delete"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
         ))}
       </div>
     </div>
@@ -590,15 +604,14 @@ function DetailView({
   item,
   loading,
   onBack,
-  onReprocess,
+  onDelete,
 }: {
   item: UiRequest | null
   loading: boolean
   onBack: () => void
-  onReprocess: (id: string) => void
+  onDelete: (item: UiRequest) => void
 }) {
   const [zoom, setZoom] = useState(1)
-  const [confirm, setConfirm] = useState(false)
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
@@ -664,10 +677,10 @@ function DetailView({
         <section className="border border-border bg-card p-3">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-muted-foreground">IMAGE VIEWER</span>
+              <span className="font-mono text-xs text-muted-foreground">MEDIA VIEWER</span>
               <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold ring-1 bg-slate-500/10 text-slate-300 ring-slate-400/20">
                 <FileImage size={11} />
-                Ảnh
+                {item.media_type === 'video' ? 'Video' : 'Phương tiện'}
               </span>
             </div>
             <div className="flex gap-2">
@@ -682,18 +695,36 @@ function DetailView({
 
           <div className="relative overflow-hidden bg-black">
             <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }} className="relative">
-              <img
-                src={item.media_url}
-                className="aspect-[16/10] w-full object-cover"
-                alt="Ảnh biển số"
-                onLoad={(event) => {
-                  const image = event.currentTarget
-                  setNatural({
-                    width: image.naturalWidth || 1,
-                    height: image.naturalHeight || 1,
-                  })
-                }}
-              />
+              {item.media_type === 'video' ? (
+                <video
+                  src={item.media_url}
+                  className="aspect-[16/10] w-full object-cover"
+                  controls
+                  muted
+                  playsInline
+                  preload="metadata"
+                  onLoadedMetadata={(event) => {
+                    const video = event.currentTarget
+                    setNatural({
+                      width: video.videoWidth || 1,
+                      height: video.videoHeight || 1,
+                    })
+                  }}
+                />
+              ) : (
+                <img
+                  src={item.media_url}
+                  className="aspect-[16/10] w-full object-cover"
+                  alt="Phương tiện biển số"
+                  onLoad={(event) => {
+                    const image = event.currentTarget
+                    setNatural({
+                      width: image.naturalWidth || 1,
+                      height: image.naturalHeight || 1,
+                    })
+                  }}
+                />
+              )}
               {bboxStyle && (
                 <div className="absolute border-2 border-accent" style={bboxStyle}>
                   <span className="absolute -top-6 left-0 bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground">Plate</span>
@@ -751,51 +782,26 @@ function DetailView({
               <p className="mt-4 border border-red-400/25 bg-red-500/10 p-3 text-sm text-red-100">{item.error_message}</p>
             )}
 
-            {['FAILED', 'NEEDS_REVIEW'].includes(item.status) && (
+            <div className="mt-4 grid gap-2">
               <button
                 type="button"
-                onClick={() => setConfirm(true)}
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 bg-accent px-4 py-2.5 text-accent-foreground transition hover:opacity-90"
+                onClick={() => onDelete(item)}
+                className="inline-flex w-full items-center justify-center gap-2 border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-red-100 transition hover:bg-red-500/20"
               >
-                <RotateCcw size={16} /> Reprocess
+                <Trash2 size={16} /> Delete
               </button>
-            )}
+            </div>
           </div>
 
           <ConfidenceCard item={item} />
         </aside>
       </div>
-
-      {confirm && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
-          <div className="max-w-md border border-border bg-card p-5">
-            <h3 className="font-semibold">Xác nhận reprocess?</h3>
-            <p className="mt-2 text-sm text-muted-foreground">Trạng thái sẽ quay về NOT_STARTED và worker sẽ chạy lại request này.</p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" className="border border-border px-4 py-2 hover:bg-secondary" onClick={() => setConfirm(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="bg-accent px-4 py-2 text-accent-foreground"
-                onClick={() => {
-                  onReprocess(item.id)
-                  setConfirm(false)
-                }}
-              >
-                Reprocess
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   )
 }
 
 export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
-  const [mode, setMode] = useState<LoadMode>(import.meta.env.VITE_USE_DEMO_DATA === 'true' ? 'demo' : 'api')
   const [route, setRoute] = useState<RouteState>(() => currentRoute())
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(5)
@@ -806,10 +812,12 @@ export default function App() {
   const [detailItem, setDetailItem] = useState<UiRequest | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
-  const [demoItems, setDemoItems] = useState<UiRequest[]>(() => demoRequests)
+  const [deleteTarget, setDeleteTarget] = useState<UiRequest | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [toast, setToast] = useState<ToastState>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
   const toastTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -845,50 +853,30 @@ export default function App() {
 
   const apiBase = getApiBaseUrl()
 
-  const loadList = async (pageToLoad = page, sizeToLoad = pageSize) => {
-    setListLoading(true)
+  const loadList = async (pageToLoad = page, sizeToLoad = pageSize, options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setListLoading(true)
+    }
     try {
-      if (mode === 'demo') {
-        const start = (pageToLoad - 1) * sizeToLoad
-        const items = demoItems.slice(start, start + sizeToLoad)
-        setListItems(items)
-        setListTotal(demoItems.length)
-        setTotalPages(Math.max(1, Math.ceil(demoItems.length / sizeToLoad)))
-        return
-      }
-
       const response = await listRecognitions(pageToLoad, sizeToLoad)
       setListItems(response.items.map(normalizeRequest))
       setListTotal(response.total)
       setTotalPages(Math.max(1, response.total_pages || 1))
       setNotice(null)
     } catch (error) {
-      if (mode === 'api') {
-        setMode('demo')
-        setNotice('Backend chưa phản hồi, đang chuyển sang demo data để bạn test giao diện.')
-        const start = (pageToLoad - 1) * sizeToLoad
-        setDemoItems(demoRequests)
-        const items = demoRequests.slice(start, start + sizeToLoad)
-        setListItems(items)
-        setListTotal(demoRequests.length)
-        setTotalPages(Math.max(1, Math.ceil(demoRequests.length / sizeToLoad)))
-      } else {
-        setNotice(error instanceof Error ? error.message : 'Không tải được danh sách')
-      }
+      setNotice(error instanceof Error ? error.message : 'Không tải được danh sách')
     } finally {
-      setListLoading(false)
+      if (!options?.silent) {
+        setListLoading(false)
+      }
     }
   }
 
-  const loadDetail = async (requestId: string) => {
-    setDetailLoading(true)
+  const loadDetail = async (requestId: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setDetailLoading(true)
+    }
     try {
-      if (mode === 'demo') {
-        const found = demoItems.find((item) => item.id === requestId) ?? null
-        setDetailItem(found)
-        return
-      }
-
       const item = normalizeRequest(await getRecognition(requestId))
       setDetailItem(item)
       setListItems((current) => current.map((row) => (row.id === item.id ? item : row)))
@@ -896,68 +884,31 @@ export default function App() {
     } catch (error) {
       if (error && typeof error === 'object' && 'status' in error && (error as { status?: number }).status === 404) {
         setDetailItem(null)
-      } else if (mode === 'api') {
-        setMode('demo')
-        setNotice('Backend chưa sẵn sàng, chi tiết đang mở bằng demo data.')
-        const found = demoItems.find((item) => item.id === requestId) ?? null
-        setDetailItem(found)
       } else {
-        setDetailItem(null)
+        setNotice(error instanceof Error ? error.message : 'Không tải được chi tiết')
       }
     } finally {
-      setDetailLoading(false)
+      if (!options?.silent) {
+        setDetailLoading(false)
+      }
     }
   }
 
-  const queueDemoCompletion = (requestId: string) => {
-    window.setTimeout(() => {
-      const plate = `${Math.floor(10 + Math.random() * 89)}${'ABCDEFGHJK'.charAt(Math.floor(Math.random() * 10))}-${Math.floor(10000 + Math.random() * 90000)}`
-      const now = new Date().toISOString()
-      setDemoItems((current) =>
-        current.map((item) =>
-          item.id === requestId
-            ? {
-                ...item,
-                status: 'COMPLETED',
-                plate_number: plate,
-                confidence_score: 88,
-                detection_confidence: 92,
-                ocr_confidence: 86,
-                needs_review: false,
-                error_message: null,
-                bounding_box: { x: 40, y: 34, width: 32, height: 16 },
-                plate_region: 'BR',
-                updated_at: now,
-              }
-            : item,
-        ),
-      )
-      setDetailItem((current) =>
-        current && current.id === requestId
-          ? {
-              ...current,
-              status: 'COMPLETED',
-              plate_number: plate,
-              confidence_score: 88,
-              detection_confidence: 92,
-              ocr_confidence: 86,
-              needs_review: false,
-              error_message: null,
-              bounding_box: { x: 40, y: 34, width: 32, height: 16 },
-              plate_region: 'BR',
-              updated_at: now,
-            }
-          : current,
-      )
-      setRefreshToken((value) => value + 1)
-      applyToast('Nhận diện hoàn tất')
-    }, 2500)
+  const refreshCurrentView = async (options?: { silent?: boolean }) => {
+    if (route.view === 'detail') {
+      await loadDetail(route.id, options)
+      return
+    }
+
+    await loadList(page, pageSize, options)
   }
 
   useEffect(() => {
-    void loadList(page, pageSize)
+    if (route.view === 'home') {
+      void loadList(page, pageSize)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, mode, refreshToken])
+  }, [page, pageSize, route.view])
 
   useEffect(() => {
     if (route.view !== 'detail') {
@@ -966,128 +917,85 @@ export default function App() {
     }
     void loadDetail(route.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.view, route.view === 'detail' ? route.id : '', mode, refreshToken])
+  }, [route.view, route.view === 'detail' ? route.id : ''])
 
   useEffect(() => {
     const shouldPollList = listItems.some((item) => !terminal(item.status))
-    if (!shouldPollList) return
+    const shouldPollDetail = route.view === 'detail' && detailItem != null && !terminal(detailItem.status)
+    if (!shouldPollList && !shouldPollDetail) return
 
     const timer = window.setInterval(() => {
       setRefreshToken((value) => value + 1)
     }, POLL_MS)
 
     return () => window.clearInterval(timer)
-  }, [listItems])
+  }, [listItems, detailItem, route.view])
 
   useEffect(() => {
-    if (route.view !== 'detail' || !detailItem || terminal(detailItem.status)) return
-
-    const timer = window.setInterval(() => {
-      setRefreshToken((value) => value + 1)
-    }, POLL_MS)
-
-    return () => window.clearInterval(timer)
-  }, [detailItem, route.view])
+    if (refreshToken === 0) return
+    void loadList(page, pageSize, { silent: true })
+    if (route.view === 'detail' && detailItem && !terminal(detailItem.status)) {
+      void loadDetail(route.id, { silent: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshToken])
 
   const processingCount = useMemo(() => listItems.filter((item) => !terminal(item.status)).length, [listItems])
 
-  const handleRefresh = () => setRefreshToken((value) => value + 1)
+  const handleRefresh = async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      await refreshCurrentView()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const handleThemeToggle = () => setTheme((value) => (value === 'dark' ? 'light' : 'dark'))
 
   const handleUpload = async (payload: { file: File; previewUrl: string }) => {
     setUploadBusy(true)
     try {
-      if (mode === 'demo') {
-        const now = new Date().toISOString()
-        const item: UiRequest = {
-          id: `demo_${Math.random().toString(16).slice(2, 10)}`,
-          image_url: payload.previewUrl,
-          media_url: payload.previewUrl,
-          media_type: 'image',
-          thumbnail_url: payload.previewUrl,
-          plate_number: null,
-          status: 'PENDING',
-          error_message: null,
-          created_at: now,
-          updated_at: now,
-          confidence_score: null,
-          detection_confidence: null,
-          ocr_confidence: null,
-          needs_review: false,
-          bounding_box: null,
-          plate_region: null,
-        }
-        setDemoItems((current) => [item, ...current])
-        navigate({ view: 'detail', id: item.id })
-        setDetailItem(item)
-        setRefreshToken((value) => value + 1)
-        applyToast('Upload demo đã tạo request mới')
-        queueDemoCompletion(item.id)
-        return
-      }
-
-      try {
-        const response: RecognitionSubmitResponse = await uploadRecognition(payload.file)
-        navigate({ view: 'detail', id: response.request_id })
+      await uploadRecognition(payload.file)
+      
+      const isVid = payload.file.type.startsWith('video/') || payload.file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
+      if (isVid) {
+        navigate({ view: 'live' })
+        applyToast('Đang phát video upload dạng stream realtime')
+      } else {
+        navigate({ view: 'home' })
         setRefreshToken((value) => value + 1)
         applyToast('Upload thành công')
-      } catch (error) {
-        applyToast(error instanceof Error ? error.message : 'Upload thất bại', 'error')
       }
+    } catch (error) {
+      applyToast(error instanceof Error ? error.message : 'Upload thất bại', 'error')
+      throw error
     } finally {
       setUploadBusy(false)
     }
   }
 
-  const handleReprocess = async (requestId: string) => {
-    if (mode === 'demo') {
-      const updatedAt = new Date().toISOString()
-      setDemoItems((current) =>
-        current.map((item) =>
-          item.id === requestId
-            ? {
-                ...item,
-                status: 'PENDING',
-                error_message: null,
-                confidence_score: null,
-                detection_confidence: null,
-                ocr_confidence: null,
-                needs_review: false,
-                bounding_box: null,
-                plate_region: null,
-                updated_at: updatedAt,
-              }
-            : item,
-        ),
-      )
-      setDetailItem((current) => {
-        if (!current || current.id !== requestId) return current
-        return {
-          ...current,
-          status: 'PENDING',
-          error_message: null,
-          confidence_score: null,
-          detection_confidence: null,
-          ocr_confidence: null,
-          needs_review: false,
-          bounding_box: null,
-          plate_region: null,
-          updated_at,
-        }
-      })
-      setRefreshToken((value) => value + 1)
-      applyToast('Reprocessing started')
-      queueDemoCompletion(requestId)
-      return
-    }
 
+  const handleDeleteRequest = (item: UiRequest) => {
+    setDeleteTarget(item)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleteBusy(true)
     try {
-      await reprocessRecognition(requestId)
-      applyToast('Reprocessing started')
+      await deleteRecognition(deleteTarget.id)
+      applyToast('Xóa thành công')
+      if (route.view === 'detail' && route.id === deleteTarget.id) {
+        navigate({ view: 'home' })
+      }
+      setDeleteTarget(null)
       setRefreshToken((value) => value + 1)
     } catch (error) {
-      applyToast(error instanceof Error ? error.message : 'Reprocess thất bại', 'error')
+      applyToast(error instanceof Error ? error.message : 'Xóa thất bại', 'error')
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -1095,17 +1003,55 @@ export default function App() {
 
   return (
     <AppShell>
-      <Header mode={mode} onRefresh={handleRefresh} onToggleTheme={handleThemeToggle} processingCount={processingCount} />
+      <Header
+        onRefresh={handleRefresh}
+        onToggleTheme={handleThemeToggle}
+        processingCount={processingCount}
+        refreshing={refreshing}
+      />
 
       {notice && <NetworkBanner message={notice} />}
+
+      {route.view !== 'detail' && route.view !== 'not-found' && (
+        <div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6">
+          <div className="flex border-b border-border">
+            <button
+              type="button"
+              onClick={() => navigate({ view: 'home' })}
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${
+                route.view === 'home'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Lịch sử Upload
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate({ view: 'live' })}
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${
+                route.view === 'live'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Giám sát Live
+            </button>
+          </div>
+        </div>
+      )}
 
       {route.view === 'detail' ? (
         <DetailView
           loading={detailLoading}
           item={selectedItem}
           onBack={() => navigate({ view: 'home' })}
-          onReprocess={handleReprocess}
+          onDelete={handleDeleteRequest}
         />
+      ) : route.view === 'live' ? (
+        <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6">
+          <LivePage />
+        </main>
       ) : route.view === 'not-found' ? (
         <main className="mx-auto max-w-5xl p-6">
           <div className="border border-border bg-card p-8">
@@ -1123,9 +1069,7 @@ export default function App() {
           <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6">
             <div className="mb-3 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
               <div>
-                <p className="font-mono text-xs uppercase tracking-wider text-muted-foreground">GET /api/v1/recognition</p>
                 <h1 className="text-2xl font-semibold">Lịch sử nhận diện</h1>
-                <p className="mt-1 text-sm text-muted-foreground">API: {apiBase}</p>
               </div>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Activity size={14} />
@@ -1137,6 +1081,7 @@ export default function App() {
               loading={listLoading}
               items={listItems}
               onOpen={(id) => navigate({ view: 'detail', id })}
+              onDelete={handleDeleteRequest}
             />
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
@@ -1182,6 +1127,15 @@ export default function App() {
             </div>
           </main>
         </>
+      )}
+
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          item={deleteTarget}
+          onCancel={() => !deleteBusy && setDeleteTarget(null)}
+          onConfirm={confirmDelete}
+          busy={deleteBusy}
+        />
       )}
 
       {toast && (
