@@ -39,6 +39,12 @@ class TemporalValidator:
             "is_valid": is_valid
         })
 
+        # Auto-Accept: if candidate strictly matches format and has very high confidence
+        auto_accept_threshold = getattr(self.validator.settings, "auto_accept_threshold", 0.85)
+        if validation.is_valid and confidence >= auto_accept_threshold:
+            track.is_confirmed = True
+            return "confirmed", cleaned_text, confidence
+
         if track.is_confirmed:
             consensus_text, avg_conf = self._get_consensus_text_and_conf(track)
             return "confirmed", consensus_text, avg_conf

@@ -13,6 +13,7 @@ from app.realtime.validator import TemporalValidator
 from app.realtime.schemas import BBoxSchema, WebSocketEvent
 from app.services.factories import get_detector, get_ocr_engine
 from app.services.preprocessing.pipeline import PreprocessingPipeline
+from app.services.detection.detector import BoundingBox
 from app.services.detection.yolo_detector import crop_to_bbox
 from app.shared.database import async_session_factory
 from app.models.recognition import RecognitionRequest, RecognitionStatus
@@ -118,7 +119,13 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
     ocr = get_ocr_engine()
     preprocessor = PreprocessingPipeline()
     tracker = IoUTracker()
-    temporal_validator = TemporalValidator(min_confirm_count=1)
+    temporal_validator = TemporalValidator(min_confirm_count=3)
+
+    # Unique vehicle tracking state
+    track_id_to_vehicle_id = {}
+    plate_to_vehicle_id = {}
+    next_vehicle_id = 1
+    recorded_vehicle_ids = set()
 
     last_processed_frame_id = -1
     last_broadcast_time = 0.0
@@ -154,8 +161,35 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
 
         fps = 1.0 / (sum(frame_times) / len(frame_times)) if frame_times else 0.0
 
-        # 1. Run detection for both vehicles and plates
-        detections = detector.detect_vehicles_and_plates(frame)
+        # 1. Run detection on the bottom half of the frame to optimize CPU usage
+        h_orig, w_orig = frame.shape[:2]
+        crop_y_start = h_orig // 2
+        bottom_half = frame[crop_y_start:, :]
+
+        detections = detector.detect_vehicles_and_plates(bottom_half)
+
+        # Shift detection coordinates back to the original full frame scale
+        for det in detections:
+            v_bbox = det["vehicle_bbox"]
+            p_bbox = det["plate_bbox"]
+
+            det["vehicle_bbox"] = BoundingBox(
+                x=v_bbox.x,
+                y=v_bbox.y + crop_y_start,
+                width=v_bbox.width,
+                height=v_bbox.height,
+                confidence=v_bbox.confidence,
+                class_name=v_bbox.class_name
+            ).clamp_to_image(h_orig, w_orig)
+
+            det["plate_bbox"] = BoundingBox(
+                x=p_bbox.x,
+                y=p_bbox.y + crop_y_start,
+                width=p_bbox.width,
+                height=p_bbox.height,
+                confidence=p_bbox.confidence,
+                class_name=p_bbox.class_name
+            ).clamp_to_image(h_orig, w_orig)
         if detections:
             real_dets = [d for d in detections if getattr(d.get("vehicle_bbox"), "class_name", "") != "full_image"]
             logger.info("Frame %d: detected %d objects (%d real vehicles/plates)", 
@@ -168,6 +202,13 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
         timestamp_str = datetime_now_iso()
         
         for track_id, track in tracker.tracks.items():
+            # If this is a new track, assign it a temporary/new vehicle ID
+            if track_id not in track_id_to_vehicle_id:
+                vid = next_vehicle_id
+                next_vehicle_id += 1
+                track_id_to_vehicle_id[track_id] = vid
+                recorded_vehicle_ids.add(vid)
+
             if track.last_seen == frame_id and not track.is_confirmed and not getattr(track, "is_rejected", False):
                 # Throttle OCR frequency to once every 3 attempts to save CPU
                 ocr_attempts = getattr(track, "ocr_attempts", 0)
@@ -198,31 +239,46 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
                         track.is_confirmed = True
                         logger.info("Plate CONFIRMED: %s (Track: %d, Conf: %.2f)", consensus_text, track_id, confidence)
                         
-                        # Emit plate.confirmed event
-                        event_payload = {
-                            "type": "plate.confirmed",
-                            "timestamp": timestamp_str,
-                            "camera_id": "cam-01",
-                            "frame_id": frame_id,
-                            "track_id": track_id,
-                            "plate_text": consensus_text,
-                            "confidence": int(confidence * 100),
-                            "vehicle_conf": int(track.vehicle_conf * 100),
-                            "plate_conf": int(track.plate_conf * 100),
-                            "bbox": {
-                                "x": int(plate_bbox.x),
-                                "y": int(plate_bbox.y),
-                                "width": int(plate_bbox.width),
-                                "height": int(plate_bbox.height)
+                        # Check if plate has already been confirmed in this session
+                        if consensus_text in plate_to_vehicle_id:
+                            old_vid = plate_to_vehicle_id[consensus_text]
+                            curr_vid = track_id_to_vehicle_id[track_id]
+                            if curr_vid != old_vid:
+                                # Merge track to the existing vehicle ID
+                                track_id_to_vehicle_id[track_id] = old_vid
+                                # Discard the redundant vehicle ID from our count
+                                recorded_vehicle_ids.discard(curr_vid)
+                                logger.info("Merged Track %d (Vehicle ID %d) into existing Vehicle ID %d for plate %s",
+                                            track_id, curr_vid, old_vid, consensus_text)
+                        else:
+                            # First time seeing this plate
+                            plate_to_vehicle_id[consensus_text] = track_id_to_vehicle_id[track_id]
+                            
+                            # Emit plate.confirmed event
+                            event_payload = {
+                                "type": "plate.confirmed",
+                                "timestamp": timestamp_str,
+                                "camera_id": "cam-01",
+                                "frame_id": frame_id,
+                                "track_id": track_id,
+                                "plate_text": consensus_text,
+                                "confidence": int(confidence * 100),
+                                "vehicle_conf": int(track.vehicle_conf * 100),
+                                "plate_conf": int(track.plate_conf * 100),
+                                "bbox": {
+                                    "x": int(plate_bbox.x),
+                                    "y": int(plate_bbox.y),
+                                    "width": int(plate_bbox.width),
+                                    "height": int(plate_bbox.height)
+                                }
                             }
-                        }
-                        logger.info("Track %d: Broadcasting plate.confirmed event and saving to DB...", track_id)
-                        run_async(broadcaster.broadcast(event_payload), loop)
-                        # Save to database
-                        run_async(
-                            save_confirmed_request(consensus_text, confidence, plate_bbox, frame, track.vehicle_conf),
-                            loop
-                        )
+                            logger.info("Track %d: Broadcasting plate.confirmed event and saving to DB...", track_id)
+                            run_async(broadcaster.broadcast(event_payload), loop)
+                            # Save to database
+                            run_async(
+                                save_confirmed_request(consensus_text, confidence, plate_bbox, frame, track.vehicle_conf),
+                                loop
+                            )
 
                     elif status == "rejected" and not getattr(track, "is_rejected", False):
                         track.is_rejected = True
@@ -309,7 +365,7 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
                         "data": {
                             "detections": active_detections,
                             "current_vehicles": len(active_detections),
-                            "total_vehicles": tracker.next_track_id - 1
+                            "total_vehicles": len(recorded_vehicle_ids)
                         }
                     }
                     run_async(broadcaster.broadcast(frame_event), loop)

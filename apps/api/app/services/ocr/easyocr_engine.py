@@ -5,6 +5,9 @@ import numpy as np
 
 from app.services.ocr.engine import OCRResult, OCREngine
 from app.shared.config import Settings, get_settings
+from app.services.preprocessing.deblur import deblur
+from app.services.preprocessing.enhance import enhance
+from app.services.preprocessing.perspective import correct_perspective
 
 logger = logging.getLogger(__name__)
 
@@ -54,38 +57,100 @@ class EasyOCREngine(OCREngine):
 
     def read(self, image: np.ndarray) -> OCRResult:
         reader = _get_reader(self.settings)
-        results = reader.readtext(
-            image,
-            allowlist=ALLOWLIST,
-            detail=1,
-        )
 
-        if not results:
+        # 1. Generate multiple image candidates using preprocessing pipelines to maximize OCR accuracy
+        candidates = [image]
+
+        try:
+            candidates.append(deblur(image))
+        except Exception as e:
+            logger.debug("Deblur candidate generation failed: %s", e)
+
+        try:
+            candidates.append(enhance(image))
+        except Exception as e:
+            logger.debug("Enhance candidate generation failed: %s", e)
+
+        try:
+            candidates.append(correct_perspective(image))
+        except Exception as e:
+            logger.debug("Perspective candidate generation failed: %s", e)
+
+        # Deduplicate candidates to avoid redundant OCR processing
+        unique_candidates = []
+        for cand in candidates:
+            if cand is not None:
+                is_dup = False
+                for uc in unique_candidates:
+                    if uc.shape == cand.shape and np.array_equal(uc, cand):
+                        is_dup = True
+                        break
+                if not is_dup:
+                    unique_candidates.append(cand)
+
+        # 2. Run OCR on all candidates and validate their format
+        from app.services.validation.validator import PlateValidator
+        validator = PlateValidator(self.settings)
+
+        ocr_candidates = []
+        for idx, cand_img in enumerate(unique_candidates):
+            try:
+                # We use readtext instead of recognize because it isolates the text region first,
+                # which is significantly more accurate for crops with borders or background noise.
+                results = reader.readtext(
+                    cand_img,
+                    allowlist=ALLOWLIST,
+                    detail=1,
+                    paragraph=False,
+                )
+                if not results:
+                    continue
+
+                texts: list[str] = []
+                confidences: list[float] = []
+                char_confs: list[float] = []
+
+                for _bbox, text, conf in results:
+                    cleaned = self._clean_text(text)
+                    if cleaned:
+                        texts.append(cleaned)
+                        confidences.append(float(conf))
+                        char_confs.extend([float(conf)] * len(cleaned))
+
+                combined = "".join(texts)
+                raw = " ".join(t for _, t, _ in [(None, r[1], r[2]) for r in results])
+                avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+
+                if combined:
+                    validation = validator.validate(combined)
+                    ocr_candidates.append({
+                        "text": combined,
+                        "confidence": avg_conf,
+                        "char_confidences": char_confs,
+                        "raw_output": raw,
+                        "is_valid": validation.is_valid
+                    })
+            except Exception as exc:
+                logger.error("OCR candidate %d extraction failed: %s", idx, exc)
+
+        if not ocr_candidates:
             return OCRResult(text="", confidence=0.0, raw_output="")
 
-        texts: list[str] = []
-        confidences: list[float] = []
-        char_confs: list[float] = []
+        # 3. Select the best OCR result
+        # Primary: strictly valid format first (matches national plate regex)
+        # Secondary: average OCR confidence score
+        # Tertiary: longer length to break ties
+        ocr_candidates.sort(key=lambda x: (x["is_valid"], x["confidence"], len(x["text"])), reverse=True)
+        best = ocr_candidates[0]
 
-        for _bbox, text, conf in results:
-            if conf < self.settings.ocr_min_confidence:
-                continue
-            cleaned = self._clean_text(text)
-            if cleaned:
-                texts.append(cleaned)
-                confidences.append(float(conf))
-                char_confs.extend([float(conf)] * len(cleaned))
+        logger.info("OCR Multi-Hypothesis select best: %r (is_valid=%s, conf=%.3f, candidate_count=%d)",
+                    best["text"], best["is_valid"], best["confidence"], len(ocr_candidates))
 
-        combined = "".join(texts)
-        raw = " ".join(t for _, t, _ in [(None, r[1], r[2]) for r in results])
-        avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
-
-        logger.debug("OCR raw=%r cleaned=%r conf=%.3f", raw, combined, avg_conf)
         return OCRResult(
-            text=combined,
-            confidence=avg_conf,
-            char_confidences=char_confs,
-            raw_output=raw,
+            text=best["text"],
+            confidence=best["confidence"],
+            char_confidences=best["char_confidences"],
+            raw_output=best["raw_output"],
         )
 
     @staticmethod

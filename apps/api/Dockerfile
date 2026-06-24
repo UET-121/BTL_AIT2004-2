@@ -11,8 +11,8 @@ WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
 # Install PyTorch with CUDA support (standard version from PyPI has built-in CUDA compatibility)
-RUN pip install --no-cache-dir --default-timeout=100 torch torchvision
-RUN pip install --no-cache-dir --default-timeout=100 -r /app/requirements.txt
+RUN pip install --no-cache-dir --default-timeout=1000 torch torchvision
+RUN pip install --no-cache-dir --default-timeout=1000 -r /app/requirements.txt
 
 COPY . /app
 

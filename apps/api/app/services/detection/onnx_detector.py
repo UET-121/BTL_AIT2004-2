@@ -275,23 +275,9 @@ class OnnxPlateDetector(PlateDetector):
     def detect_vehicles_and_plates(self, image: np.ndarray) -> list[dict]:
         """Detects both vehicles and license plates and associates them."""
         h, w = image.shape[:2]
-        vehicles_detected = []
         plates_detected = []
 
-        # 1. Run vehicle detection (coco model)
-        if self._vehicle_session is not None:
-            # ONNX model requires the static 640x640 shape exported by default
-            output, r, pad = self._run_inference(self._vehicle_session, image, imgsz=640)
-            vehicles_detected = self._postprocess(
-                output, 
-                image.shape[:2], 
-                r, 
-                pad, 
-                0.5, 
-                is_vehicle=True
-            )
-
-        # 2. Run plate detection (custom model)
+        # 1. Run plate detection (custom model) first if configured
         is_custom_plate_model = self.settings.plate_detection_model != "yolov8n.pt"
         if is_custom_plate_model and self._plate_session is not None:
             output, r, pad = self._run_inference(self._plate_session, image, imgsz=640)
@@ -306,55 +292,10 @@ class OnnxPlateDetector(PlateDetector):
             for plate in plates_detected:
                 plate.class_name = "plate"
 
-        # 3. Associate plates with vehicles
-        associated_results = []
-        used_plates = set()
-
-        for veh in vehicles_detected:
-            matching_plate = None
-            best_overlap = -1.0
-            for i, plt in enumerate(plates_detected):
-                x_left = max(veh.x, plt.x)
-                y_top = max(veh.y, plt.y)
-                x_right = min(veh.x + veh.width, plt.x + plt.width)
-                y_bottom = min(veh.y + veh.height, plt.y + plt.height)
-                
-                if x_right > x_left and y_bottom > y_top:
-                    intersection = (x_right - x_left) * (y_bottom - y_top)
-                    plate_area = plt.width * plt.height
-                    overlap = intersection / plate_area if plate_area > 0 else 0
-                    if overlap > 0.5 and overlap > best_overlap:
-                        best_overlap = overlap
-                        matching_plate = plt
-                        used_plates.add(i)
-
-            if matching_plate is None:
-                vehicle_h = veh.height
-                plate_y1 = veh.y + int(vehicle_h * 0.7)
-                plate_y2 = veh.y + vehicle_h
-                plate_bbox = BoundingBox(
-                    x=veh.x,
-                    y=plate_y1,
-                    width=veh.width,
-                    height=max(1, plate_y2 - plate_y1),
-                    confidence=veh.confidence * 0.8,
-                    class_name="vehicle_plate_region"
-                ).clamp_to_image(h, w)
-                plate_conf = veh.confidence * 0.8
-            else:
-                plate_bbox = matching_plate
-                plate_conf = matching_plate.confidence
-
-            associated_results.append({
-                "vehicle_bbox": veh,
-                "plate_bbox": plate_bbox,
-                "vehicle_conf": veh.confidence,
-                "plate_conf": plate_conf,
-                "class_name": veh.class_name
-            })
-
-        for i, plt in enumerate(plates_detected):
-            if i not in used_plates:
+        # 2. If plates are detected, we bypass the COCO vehicle detection model pass to save CPU!
+        if plates_detected:
+            associated_results = []
+            for plt in plates_detected:
                 veh_bbox = BoundingBox(
                     x=max(0, plt.x - plt.width),
                     y=max(0, plt.y - plt.height * 2),
@@ -370,6 +311,43 @@ class OnnxPlateDetector(PlateDetector):
                     "plate_conf": plt.confidence,
                     "class_name": "car"
                 })
+            return associated_results
+
+        # 3. Fallback: Run vehicle detection (if no plates found or not using custom plate model)
+        vehicles_detected = []
+        if self._vehicle_session is not None:
+            # ONNX model requires the static 640x640 shape exported by default
+            output, r, pad = self._run_inference(self._vehicle_session, image, imgsz=640)
+            vehicles_detected = self._postprocess(
+                output, 
+                image.shape[:2], 
+                r, 
+                pad, 
+                0.5, 
+                is_vehicle=True
+            )
+
+        # 4. Associate vehicles with estimated plate region if no plates were detected directly
+        associated_results = []
+        for veh in vehicles_detected:
+            vehicle_h = veh.height
+            plate_y1 = veh.y + int(vehicle_h * 0.7)
+            plate_y2 = veh.y + vehicle_h
+            plate_bbox = BoundingBox(
+                x=veh.x,
+                y=plate_y1,
+                width=veh.width,
+                height=max(1, plate_y2 - plate_y1),
+                confidence=veh.confidence * 0.8,
+                class_name="vehicle_plate_region"
+            ).clamp_to_image(h, w)
+            associated_results.append({
+                "vehicle_bbox": veh,
+                "plate_bbox": plate_bbox,
+                "vehicle_conf": veh.confidence,
+                "plate_conf": veh.confidence * 0.8,
+                "class_name": veh.class_name
+            })
 
         if not associated_results:
             full_box = BoundingBox(

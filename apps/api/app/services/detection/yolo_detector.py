@@ -98,10 +98,53 @@ class YoloPlateDetector(PlateDetector):
         }
         """
         h, w = image.shape[:2]
-        vehicles_detected = []
         plates_detected = []
 
-        # 1. Run vehicle detection (always using yolov8n.pt coco model)
+        # 1. Run plate detection (custom model) first if configured
+        is_custom_plate_model = self.settings.plate_detection_model != "yolov8n.pt"
+        if is_custom_plate_model and self._model is not None:
+            results = self._run_yolo_inference(self._model, image, imgsz=640)
+            for result in results:
+                if result.boxes is None:
+                    continue
+                for box in result.boxes:
+                    conf = float(box.conf[0])
+                    if conf < self.settings.plate_detection_confidence:
+                        continue
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    bbox = BoundingBox(
+                        x=x1,
+                        y=y1,
+                        width=x2 - x1,
+                        height=y2 - y1,
+                        confidence=conf,
+                        class_name="plate"
+                    ).clamp_to_image(h, w)
+                    plates_detected.append(bbox)
+
+        # 2. If plates are detected, we bypass the COCO vehicle detection model pass to save CPU!
+        if plates_detected:
+            associated_results = []
+            for plt in plates_detected:
+                veh_bbox = BoundingBox(
+                    x=max(0, plt.x - plt.width),
+                    y=max(0, plt.y - plt.height * 2),
+                    width=plt.width * 3,
+                    height=plt.height * 4,
+                    confidence=plt.confidence,
+                    class_name="car"
+                ).clamp_to_image(h, w)
+                associated_results.append({
+                    "vehicle_bbox": veh_bbox,
+                    "plate_bbox": plt,
+                    "vehicle_conf": plt.confidence * 0.8,
+                    "plate_conf": plt.confidence,
+                    "class_name": "car"
+                })
+            return associated_results
+
+        # 3. Fallback: Run vehicle detection (if no plates found or not using custom plate model)
+        vehicles_detected = []
         vehicle_model = self._model if self.settings.plate_detection_model == "yolov8n.pt" else getattr(self, "_vehicle_model", None)
         if vehicle_model is None:
             try:
@@ -132,91 +175,27 @@ class YoloPlateDetector(PlateDetector):
                         ).clamp_to_image(h, w)
                         vehicles_detected.append(bbox)
 
-        is_custom_plate_model = self.settings.plate_detection_model != "yolov8n.pt"
-        if is_custom_plate_model and self._model is not None:
-            results = self._run_yolo_inference(self._model, image, imgsz=640)
-            for result in results:
-                if result.boxes is None:
-                    continue
-                for box in result.boxes:
-                    conf = float(box.conf[0])
-                    if conf < self.settings.plate_detection_confidence:
-                        continue
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    bbox = BoundingBox(
-                        x=x1,
-                        y=y1,
-                        width=x2 - x1,
-                        height=y2 - y1,
-                        confidence=conf,
-                        class_name="plate"
-                    ).clamp_to_image(h, w)
-                    plates_detected.append(bbox)
-
-        # 3. Associate plates with vehicles, and fallback if needed
+        # 4. Associate vehicles with estimated plate region if no plates were detected directly
         associated_results = []
-        used_plates = set()
-
         for veh in vehicles_detected:
-            matching_plate = None
-            best_overlap = -1.0
-            for i, plt in enumerate(plates_detected):
-                x_left = max(veh.x, plt.x)
-                y_top = max(veh.y, plt.y)
-                x_right = min(veh.x + veh.width, plt.x + plt.width)
-                y_bottom = min(veh.y + veh.height, plt.y + plt.height)
-                
-                if x_right > x_left and y_bottom > y_top:
-                    intersection = (x_right - x_left) * (y_bottom - y_top)
-                    plate_area = plt.width * plt.height
-                    overlap = intersection / plate_area if plate_area > 0 else 0
-                    if overlap > 0.5 and overlap > best_overlap:
-                        best_overlap = overlap
-                        matching_plate = plt
-                        used_plates.add(i)
-
-            if matching_plate is None:
-                vehicle_h = veh.height
-                plate_y1 = veh.y + int(vehicle_h * 0.7)
-                plate_y2 = veh.y + vehicle_h
-                plate_bbox = BoundingBox(
-                    x=veh.x,
-                    y=plate_y1,
-                    width=veh.width,
-                    height=max(1, plate_y2 - plate_y1),
-                    confidence=veh.confidence * 0.8,
-                    class_name="vehicle_plate_region"
-                ).clamp_to_image(h, w)
-                plate_conf = veh.confidence * 0.8
-            else:
-                plate_bbox = matching_plate
-                plate_conf = matching_plate.confidence
-
+            vehicle_h = veh.height
+            plate_y1 = veh.y + int(vehicle_h * 0.7)
+            plate_y2 = veh.y + vehicle_h
+            plate_bbox = BoundingBox(
+                x=veh.x,
+                y=plate_y1,
+                width=veh.width,
+                height=max(1, plate_y2 - plate_y1),
+                confidence=veh.confidence * 0.8,
+                class_name="vehicle_plate_region"
+            ).clamp_to_image(h, w)
             associated_results.append({
                 "vehicle_bbox": veh,
                 "plate_bbox": plate_bbox,
                 "vehicle_conf": veh.confidence,
-                "plate_conf": plate_conf,
+                "plate_conf": veh.confidence * 0.8,
                 "class_name": veh.class_name
             })
-
-        for i, plt in enumerate(plates_detected):
-            if i not in used_plates:
-                veh_bbox = BoundingBox(
-                    x=max(0, plt.x - plt.width),
-                    y=max(0, plt.y - plt.height * 2),
-                    width=plt.width * 3,
-                    height=plt.height * 4,
-                    confidence=plt.confidence,
-                    class_name="car"
-                ).clamp_to_image(h, w)
-                associated_results.append({
-                    "vehicle_bbox": veh_bbox,
-                    "plate_bbox": plt,
-                    "vehicle_conf": plt.confidence * 0.8,
-                    "plate_conf": plt.confidence,
-                    "class_name": "car"
-                })
 
         if not associated_results:
             full_box = BoundingBox(
