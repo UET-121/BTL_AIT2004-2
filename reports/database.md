@@ -19,7 +19,7 @@
 
 ## 1. Thiết kế Lược đồ Cấu trúc (Schema Design)
 
-Hệ thống sử dụng cơ sở dữ liệu quan hệ **PostgreSQL 16** để lưu trữ thông tin nhận diện biển số xe và siêu dữ liệu (metadata) đi kèm. Bảng trung tâm điều phối dữ liệu là `recognition_requests`, được ánh xạ bằng SQLAlchemy ORM thông qua lớp [RecognitionRequest](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/models/recognition.py#L20) trong [recognition.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/models/recognition.py).
+Hệ thống sử dụng cơ sở dữ liệu quan hệ **PostgreSQL 16** để lưu trữ thông tin nhận diện biển số xe và siêu dữ liệu (metadata) đi kèm. Bảng trung tâm điều phối dữ liệu là `recognition_requests`, được ánh xạ bằng SQLAlchemy ORM thông qua lớp [RecognitionRequest](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/models/recognition.py#L20) trong [recognition.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/models/recognition.py).
 
 ### Chi tiết các cột trong bảng `recognition_requests`:
 
@@ -44,9 +44,9 @@ Hệ thống sử dụng cơ sở dữ liệu quan hệ **PostgreSQL 16** để 
 
 ## 2. Quản lý Phiên bản & Di cư Lược đồ (Migrations with Alembic)
 
-Việc nâng cấp lược đồ cơ sở dữ liệu trên các môi trường được tự động hóa hoàn toàn bằng công cụ **Alembic**, cấu hình tại tệp tin [alembic.ini](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/alembic.ini).
+Việc nâng cấp lược đồ cơ sở dữ liệu trên các môi trường được tự động hóa hoàn toàn bằng công cụ **Alembic**, cấu hình tại tệp tin [alembic.ini](file:///home/leduc1009/BTL_AIT2004-2/apps/api/alembic.ini).
 
-Lịch sử các phiên bản migration nằm trong thư mục [migrations/versions](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/migrations/versions):
+Lịch sử các phiên bản migration nằm trong thư mục [migrations/versions](file:///home/leduc1009/BTL_AIT2004-2/apps/api/migrations/versions):
 1. **`001_create_recognition_requests.py`:** Khởi tạo cấu trúc bảng `recognition_requests` sơ khai kèm theo kiểu dữ liệu ENUM trạng thái.
 2. **`002_add_confidence_and_detection_fields.py`:** Mở rộng thêm các trường lưu trữ điểm tin cậy riêng biệt (`detection_confidence`, `ocr_confidence`) để phục vụ thuật toán đánh giá đa tầng.
 3. **`003_add_not_started_status.py`:** Cập nhật bổ sung trạng thái `NOT_STARTED` vào danh sách trạng thái của kiểu dữ liệu ENUM để quản lý các tác vụ vừa tạo chưa chạy.
@@ -57,11 +57,11 @@ Lịch sử các phiên bản migration nằm trong thư mục [migrations/versi
 
 ## 3. Quản lý Kết nối và Vòng đời Phiên (Connection Pooling & Sessions)
 
-Để tối ưu hóa số lượng kết nối đồng thời và giảm chi phí bắt tay TCP thiết lập kết nối đến Postgres, hệ thống cấu hình bộ động cơ SQLAlchemy bất đồng bộ (`create_async_engine`) tại [database.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/shared/database.py):
+Để tối ưu hóa số lượng kết nối đồng thời và giảm chi phí bắt tay TCP thiết lập kết nối đến Postgres, hệ thống cấu hình bộ động cơ SQLAlchemy bất đồng bộ (`create_async_engine`) tại [database.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/shared/database.py):
 
 - **Connection Pool:** Cấu hình hồ chứa gồm `pool_size=5` kết nối mặc định, cho phép mở rộng tạm thời `max_overflow=10` kết nối phụ khi hệ thống chịu tải cao đột biến.
 - **Pre-Ping:** Bật `pool_pre_ping=True` để thực thi câu lệnh SQL nhẹ (`SELECT 1`) kiểm tra tính hoạt động của kết nối trước khi bàn giao cho ứng dụng, giúp ngăn chặn lỗi mất kết nối đột ngột (stale connection errors).
-- **Session Generator ([get_db](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/shared/database.py#L32)):** Cung cấp cơ chế yield Session bất đồng bộ cho mỗi request. Nếu có bất kỳ lỗi logic hoặc lỗi cơ sở dữ liệu phát sinh trong luồng xử lý API, khối lệnh `try...except` sẽ tự động thực hiện `session.rollback()` trước khi đóng kết nối để giữ an toàn tuyệt đối cho dữ liệu.
+- **Session Generator ([get_db](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/shared/database.py#L32)):** Cung cấp cơ chế yield Session bất đồng bộ cho mỗi request. Nếu có bất kỳ lỗi logic hoặc lỗi cơ sở dữ liệu phát sinh trong luồng xử lý API, khối lệnh `try...except` sẽ tự động thực hiện `session.rollback()` trước khi đóng kết nối để giữ an toàn tuyệt đối cho dữ liệu.
 
 ---
 
@@ -70,7 +70,7 @@ Lịch sử các phiên bản migration nằm trong thư mục [migrations/versi
 Nhận diện biển số là hệ thống lưu trữ lịch sử liên tục, số lượng bản ghi trong sản xuất có thể tăng lên hàng triệu dòng. Hệ thống áp dụng các giải pháp tối ưu sau:
 
 ### 4.1. Thiết lập Index thông minh
-- **Index Thời gian Giảm dần:** Bảng `recognition_requests` định nghĩa chỉ mục B-Tree `ix_recognition_requests_created_at_desc` trên cột `created_at` sắp xếp giảm dần tại [recognition.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/models/recognition.py#L22). Điều này giúp các truy vấn GET danh sách phân trang (sắp xếp theo thời gian mới nhất) đạt độ trễ cực thấp $O(\log N)$ thay vì quét toàn bộ bảng (Full Table Scan).
+- **Index Thời gian Giảm dần:** Bảng `recognition_requests` định nghĩa chỉ mục B-Tree `ix_recognition_requests_created_at_desc` trên cột `created_at` sắp xếp giảm dần tại [recognition.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/models/recognition.py#L22). Điều này giúp các truy vấn GET danh sách phân trang (sắp xếp theo thời gian mới nhất) đạt độ trễ cực thấp $O(\log N)$ thay vì quét toàn bộ bảng (Full Table Scan).
 - **Kế hoạch tương lai:** Bổ sung chỉ mục GIN (Generalized Inverted Index) trên cột `plate_number` kết hợp tiện ích mở rộng `pg_trgm` để hỗ trợ tìm kiếm mờ (fuzzy search) biển số xe theo mảnh ký tự với tốc độ cao.
 
 ### 4.2. Phân vùng Dữ liệu (Time-Series Partitioning)
@@ -103,8 +103,8 @@ Hệ thống thiết lập quy trình sao lưu nghiêm ngặt nhằm đáp ứng
 
 Dưới đây là các tệp tin quan trọng nhất liên quan tới cơ sở dữ liệu:
 
-* **Đặc tả bảng dữ liệu:** [recognition.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/models/recognition.py) -> Lớp định nghĩa bảng [RecognitionRequest](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/models/recognition.py#L20).
-* **Khởi tạo kết nối & Generator:** [database.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/shared/database.py) -> Quản lý Pool và hàm phụ thuộc [get_db](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/shared/database.py#L32).
-* **Cấu hình Alembic:** [alembic.ini](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/alembic.ini) -> Tệp cấu hình đường dẫn di cư.
-* **Thư mục chứa script migration:** [versions/](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/migrations/versions) -> Các file chứa mã nâng cấp/hạ cấp CSDL.
-* **Cấu hình dịch vụ Docker CSDL:** [docker-compose.yml](file:///d:/MySC/Python/BTL_AIT2004-2/docker-compose.yml#L2) -> Cấu hình container hình ảnh `postgres:16-alpine`.
+* **Đặc tả bảng dữ liệu:** [recognition.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/models/recognition.py) -> Lớp định nghĩa bảng [RecognitionRequest](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/models/recognition.py#L20).
+* **Khởi tạo kết nối & Generator:** [database.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/shared/database.py) -> Quản lý Pool và hàm phụ thuộc [get_db](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/shared/database.py#L32).
+* **Cấu hình Alembic:** [alembic.ini](file:///home/leduc1009/BTL_AIT2004-2/apps/api/alembic.ini) -> Tệp cấu hình đường dẫn di cư.
+* **Thư mục chứa script migration:** [versions/](file:///home/leduc1009/BTL_AIT2004-2/apps/api/migrations/versions) -> Các file chứa mã nâng cấp/hạ cấp CSDL.
+* **Cấu hình dịch vụ Docker CSDL:** [docker-compose.yml](file:///home/leduc1009/BTL_AIT2004-2/docker-compose.yml#L2) -> Cấu hình container hình ảnh `postgres:16-alpine`.

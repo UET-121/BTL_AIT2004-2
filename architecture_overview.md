@@ -80,8 +80,8 @@ Thư mục này chịu trách nhiệm định nghĩa các cấu trúc dữ liệ
 
 | Tên File | Chức Năng Chi Tiết | Input chính | Output chính |
 | :--- | :--- | :--- | :--- |
-| [recognition.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/models/recognition.py) | **Database Entity Model**: Định nghĩa bảng SQL `recognition_requests` dùng SQLAlchemy ORM để lưu trữ kết quả nhận diện (ảnh xe, biển số, tọa độ bbox, độ tin cậy, thông tin metadata của nguồn video). | Lệnh ghi/cập nhật bản ghi từ FastAPI router hoặc luồng inference. | Bảng cơ sở dữ liệu `recognition_requests` trong PostgreSQL. |
-| [schemas.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/models/schemas.py) | **Pydantic Schemas**: Định nghĩa cấu trúc JSON phục vụ việc kiểm tra đầu vào và định dạng đầu ra của các HTTP REST API (ví dụ: danh sách lịch sử nhận diện, phân trang, thông tin trạng thái sức khỏe hệ thống `/health`). | Dữ liệu thô từ database hoặc request payload. | JSON được chuẩn hóa gửi về phía Client. |
+| [recognition.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/models/recognition.py) | **Database Entity Model**: Định nghĩa bảng SQL `recognition_requests` dùng SQLAlchemy ORM để lưu trữ kết quả nhận diện (ảnh xe, biển số, tọa độ bbox, độ tin cậy, thông tin metadata của nguồn video). | Lệnh ghi/cập nhật bản ghi từ FastAPI router hoặc luồng inference. | Bảng cơ sở dữ liệu `recognition_requests` trong PostgreSQL. |
+| [schemas.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/models/schemas.py) | **Pydantic Schemas**: Định nghĩa cấu trúc JSON phục vụ việc kiểm tra đầu vào và định dạng đầu ra của các HTTP REST API (ví dụ: danh sách lịch sử nhận diện, phân trang, thông tin trạng thái sức khỏe hệ thống `/health`). | Dữ liệu thô từ database hoặc request payload. | JSON được chuẩn hóa gửi về phía Client. |
 
 ---
 
@@ -90,31 +90,32 @@ Thư mục này chịu trách nhiệm định nghĩa các cấu trúc dữ liệ
 Thư mục này chứa các thành phần xử lý học máy không trạng thái. Mỗi dịch vụ xử lý độc lập trên từng ảnh tĩnh/vùng ảnh cắt ra, không quan tâm tới yếu tố thời gian hoặc lịch sử frame trước đó.
 
 #### A. Phát hiện đối tượng (Detection)
-- **[detection/detector.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/detection/detector.py)**: Định nghĩa interface trừu tượng `PlateDetector` và cấu trúc dữ liệu `BoundingBox` (dùng trong xử lý logic ML).
-- **[detection/yolo_detector.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/detection/yolo_detector.py)**: Cài đặt thuật toán phát hiện biển số/phương tiện sử dụng YOLOv8. Có 2 chức năng chính:
+- **[detection/detector.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/detection/detector.py)**: Định nghĩa interface trừu tượng `PlateDetector` và cấu trúc dữ liệu `BoundingBox` (dùng trong xử lý logic ML).
+- **[detection/yolo_detector.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/detection/yolo_detector.py)**: Cài đặt thuật toán phát hiện biển số/phương tiện sử dụng YOLOv8. Có các chức năng chính:
   - `detect`: Phát hiện biển số đơn lẻ bằng 3 cấp độ dự phòng (Tier 1: Nhận dạng biển số trực tiếp; Tier 2: Nhận dạng ô tô rồi tự tính toán cắt phần dưới; Tier 3: Trả về toàn bộ ảnh nếu không tìm thấy gì).
   - `detect_vehicles_and_plates`: Chạy song song YOLOv8n (COCO) để bắt phương tiện và YOLOv8 tùy chỉnh để bắt biển số, sau đó tính toán diện tích đè lên nhau (Intersection-over-Area > 50%) để gắn biển số vào đúng phương tiện tương ứng.
+  - `crop_to_bbox`: Thực hiện cắt ảnh theo vùng bao được phát hiện. Tích hợp cơ chế tự động mở rộng viền thêm **5% diện tích lề** (Bbox Padding) nhằm tránh tình trạng mất nét chữ ở sát mép, tăng độ chính xác cho bộ OCR.
 
 #### B. Nhận diện ký tự (OCR)
-- **[ocr/engine.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/ocr/engine.py)**: Định nghĩa class trừu tượng `OCREngine` và cấu trúc kết quả nhận dạng `OCRResult`.
-- **[ocr/easyocr_engine.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/ocr/easyocr_engine.py)**: Sử dụng EasyOCR để đọc text từ vùng ảnh biển số đã tiền xử lý. Áp dụng whitelist ký tự `A-Z0-9` và tự động loại bỏ các khoảng trắng hay ký tự lạ.
+- **[ocr/engine.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/ocr/engine.py)**: Định nghĩa class trừu tượng `OCREngine` và cấu trúc kết quả nhận dạng `OCRResult`.
+- **[ocr/easyocr_engine.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/ocr/easyocr_engine.py)**: Sử dụng EasyOCR để đọc text từ vùng ảnh biển số đã tiền xử lý. Áp dụng whitelist ký tự `A-Z0-9` và tự động loại bỏ các khoảng trắng hay ký tự lạ.
 
 #### C. Tiền xử lý ảnh (Preprocessing)
 Thư mục `app/services/preprocessing` cung cấp các thuật toán OpenCV nhằm làm sạch ảnh biển số bị mờ, tối, nghiêng trước khi chuyển sang cho OCR:
-- **[deblur.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/preprocessing/deblur.py)**: Dùng ma trận lọc thông cao (High-pass filter Laplacian kernel) để làm sắc nét viền ảnh bị mờ chuyển động.
-- **[enhance.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/preprocessing/enhance.py)**: Sử dụng CLAHE (Contrast Limited Adaptive Histogram Equalization) trên kênh màu sáng LAB để làm nổi rõ ký tự biển số ở điều kiện thiếu sáng hoặc lóa sáng.
-- **[perspective.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/preprocessing/perspective.py)**: Tìm contour lớn nhất, phát hiện 4 góc biển và thực hiện phép biến đổi hình học (Warp Perspective) để đưa ảnh biển về dạng nhìn thẳng đứng thẳng hàng.
-- **[quality.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/preprocessing/quality.py)**: Đánh giá nhanh độ nhòe (dựa trên biến thiên Laplacian) và độ tương phản của ảnh gốc để quyết định có cần kích hoạt tính năng làm mịn/làm rõ không.
-- **[pipeline.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/preprocessing/pipeline.py)**: Điều phối toàn bộ quy trình trên, áp dụng linh hoạt theo các chế độ (Mặc định, Tấn công - Aggressive, Hiệu chỉnh góc - Perspective).
+- **[deblur.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/preprocessing/deblur.py)**: Dùng ma trận lọc thông cao (High-pass filter Laplacian kernel) để làm sắc nét viền ảnh bị mờ chuyển động.
+- **[enhance.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/preprocessing/enhance.py)**: Sử dụng CLAHE (Contrast Limited Adaptive Histogram Equalization) trên kênh màu sáng LAB để làm nổi rõ ký tự biển số ở điều kiện thiếu sáng hoặc lóa sáng.
+- **[perspective.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/preprocessing/perspective.py)**: Tìm contour lớn nhất, phát hiện 4 góc biển và thực hiện phép biến đổi hình học (Warp Perspective) để đưa ảnh biển về dạng nhìn thẳng đứng thẳng hàng.
+- **[quality.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/preprocessing/quality.py)**: Đánh giá nhanh độ nhòe (dựa trên biến thiên Laplacian) và độ tương phản của ảnh gốc để quyết định có cần kích hoạt tính năng làm mịn/làm rõ không.
+- **[pipeline.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/preprocessing/pipeline.py)**: Điều phối toàn bộ quy trình trên, áp dụng linh hoạt theo các chế độ (Mặc định, Tấn công - Aggressive, Hiệu chỉnh góc - Perspective).
 
 #### D. Chuẩn hóa & Kiểm Tra Định Dạng (Validation)
-- **[validation/rules/base.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/validation/rules/base.py)**: Interface `PlateRule` kiểm thử định dạng biển.
-- **[validation/rules/brazil.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/validation/rules/brazil.py)**: Cài đặt quy tắc kiểm tra biển số Brazil. Thực hiện đối khớp biểu thức chính quy (Regex) cho cả biển Mercosul (`AAA0A00` hoặc `AAA0000`) và biển cũ. Đồng thời chứa bảng ánh xạ sửa đổi sai số OCR (ví dụ: phát hiện chữ `O` ở vị trí phải là số thì tự động đổi thành số `0`, chữ `I` đổi thành số `1`, v.v.).
-- **[validation/validator.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/validation/validator.py)**: Lớp trung gian `PlateValidator` nhận dạng vùng miền để nạp quy tắc kiểm định tương ứng (mặc định là vùng "BR").
+- **[validation/rules/base.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/validation/rules/base.py)**: Interface `PlateRule` kiểm thử định dạng biển.
+- **[validation/rules/brazil.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/validation/rules/brazil.py)**: Cài đặt quy tắc kiểm tra biển số Brazil. Thực hiện đối khớp biểu thức chính quy (Regex) cho cả biển Mercosul (`AAA0A00` hoặc `AAA0000`) và biển cũ. Đồng thời chứa bảng ánh xạ sửa đổi sai số OCR (ví dụ: phát hiện chữ `O` ở vị trí phải là số thì tự động đổi thành số `0`, chữ `I` đổi thành số `1`, v.v.).
+- **[validation/validator.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/validation/validator.py)**: Lớp trung gian `PlateValidator` nhận dạng vùng miền để nạp quy tắc kiểm định tương ứng (mặc định là vùng "BR").
 
 #### E. Tiện ích quản lý khởi tạo & Lưu trữ
-- **[factories.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/factories.py)**: Chứa các hàm tạo singleton (`@lru_cache`) cho các model phát hiện biển số, OCR, và validator giúp tăng tốc khởi tạo ở hàm `preload_ml_components` khi server FastAPI start.
-- **[storage.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/storage.py)**: Quản lý ghi file ảnh cắt biển số/xe lên Local storage hoặc MinIO bucket.
+- **[factories.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/factories.py)**: Chứa các hàm tạo singleton (`@lru_cache`) cho các model phát hiện biển số, OCR, và validator giúp tăng tốc khởi tạo ở hàm `preload_ml_components` khi server FastAPI start.
+- **[storage.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/storage.py)**: Quản lý ghi file ảnh cắt biển số/xe lên Local storage hoặc MinIO bucket.
 
 ---
 
@@ -122,29 +123,29 @@ Thư mục `app/services/preprocessing` cung cấp các thuật toán OpenCV nh�
 
 Đây là tầng xử lý có trạng thái (Stateful). Nó liên kết các frame ảnh tĩnh thành một chuỗi thời gian liên tục, duy trì định danh của từng xe đi qua camera và tích lũy thông tin nhận dạng.
 
-- **[state.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/state.py)**: Chứa class `StreamState` (singleton `shared_state`). Nó sử dụng `threading.Lock` để đồng bộ hóa việc ghi frame mới nhất từ luồng đọc camera (`capture.py`) và đọc frame ra ở luồng phân tích (`inference.py`). Lớp này cũng quản lý cờ dừng luồng `stop_event` và lưu vết lỗi nếu mất tín hiệu camera.
-- **[capture.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/capture.py)**: Chạy một luồng nền độc lập (`LPR-CaptureThread`). Sử dụng OpenCV `cv2.VideoCapture` để đọc frame thô từ Webcam (`0`), RTSP link, hoặc Video file. Nếu là video file, nó sẽ tự tính toán độ trễ dựa trên FPS gốc để giả lập tốc độ chạy thực tế, tránh tràn bộ nhớ đệm.
-- **[tracker.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/tracker.py)**:
+- **[state.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/realtime/state.py)**: Chứa class `StreamState` (singleton `shared_state`). Nó sử dụng `threading.Lock` để đồng bộ hóa việc ghi frame mới nhất từ luồng đọc camera (`capture.py`) và đọc frame ra ở luồng phân tích (`inference.py`). Lớp này cũng quản lý cờ dừng luồng `stop_event` và lưu vết lỗi nếu mất tín hiệu camera.
+- **[capture.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/realtime/capture.py)**: Chạy một luồng nền độc lập (`LPR-CaptureThread`). Sử dụng OpenCV `cv2.VideoCapture` để đọc frame thô từ Webcam (`0`), RTSP link, hoặc Video file. Nếu là video file, nó sẽ tự tính toán độ trễ dựa trên FPS gốc để giả lập tốc độ chạy thực tế, tránh tràn bộ nhớ đệm.
+- **[tracker.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/realtime/tracker.py)**:
   - Khai báo class `Track`: Lưu giữ thông tin lịch sử của một phương tiện qua các frame (Track ID, tọa độ bounding box hiện tại của xe/biển, danh sách các ký tự OCR từng nhận diện được cùng độ tin cậy, trạng thái biển đã được xác nhận - `is_confirmed` hoặc bị loại bỏ - `is_rejected`).
   - Khai báo class `IoUTracker`: So sánh bounding box của các phương tiện được phát hiện ở frame hiện tại với các xe đang theo dõi từ các frame trước thông qua chỉ số IoU (Intersection-over-Union). Nếu khớp (IoU >= 0.3), hệ thống giữ nguyên Track ID đó và cập nhật tọa độ mới. Nếu không khớp xe nào, cấp một Track ID mới. Tự động loại bỏ các Track mất dấu quá 15 frame.
-- **[validator.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/validator.py)**: Lớp `TemporalValidator` giải quyết bài toán rung lắc chữ/sai ký tự trên video. Thay vì lấy kết quả OCR của duy nhất 1 frame, nó tích lũy các chuỗi text OCR đọc được trên cùng một Track ID qua nhiều frame:
+- **[validator.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/realtime/validator.py)**: Lớp `TemporalValidator` giải quyết bài toán rung lắc chữ/sai ký tự trên video. Thay vì lấy kết quả OCR của duy nhất 1 frame, nó tích lũy các chuỗi text OCR đọc được trên cùng một Track ID qua nhiều frame:
   - Lọc ra các ký tự ứng viên khớp đúng định dạng Regex (bằng cách dùng dịch vụ `PlateValidator`).
   - Áp dụng kỹ thuật biểu quyết đa số (majority voting): Nếu một chuỗi biển số hợp lệ xuất hiện tối thiểu `min_confirm_count` lần (mặc định là 3), biển số đó chính thức được xác nhận trạng thái `"confirmed"`.
   - Nếu đã thử tới `max_candidates` lần (mặc định là 8) mà không đạt đủ độ đồng thuận, biển số đó bị đánh dấu `"rejected"`.
-- **[inference.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/inference.py)**: Luồng xử lý phân tích trung tâm (`LPR-InferenceThread`). Chạy liên tục trong nền:
+- **[inference.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/realtime/inference.py)**: Luồng xử lý phân tích trung tâm (`LPR-InferenceThread`). Chạy liên tục trong nền:
   1. Đọc frame từ `shared_state`.
   2. Gửi ảnh qua `YoloPlateDetector` để phát hiện vùng chứa xe và biển số.
   3. Đưa tọa độ phát hiện được vào `IoUTracker` để cập nhật/gán Track ID.
   4. Với mỗi Track đang hoạt động ở frame này, nếu biển số chưa được xác nhận:
-     - Cắt vùng ảnh chứa biển số (`crop_to_bbox`).
+     - Cắt vùng ảnh chứa biển số (`crop_to_bbox` - tự động mở rộng lề 5% để cung cấp thêm bối cảnh viền cho OCR).
      - Gửi qua `PreprocessingPipeline` để tăng chất lượng ảnh.
      - Dùng `EasyOCREngine` để đọc text.
      - Đưa text và độ tin cậy vào `TemporalValidator` để cập nhật đồng thuận.
      - Nếu trạng thái chuyển sang `"confirmed"`: Lưu ảnh cắt vào MinIO, lưu bản ghi hoàn thành vào PostgreSQL database thông qua `async_session_factory`, đồng thời phát sự kiện `"plate.confirmed"` qua WebSocket.
   5. Giới hạn tần suất (mặc định tối đa 10 FPS) để mã hóa Base64 ảnh frame hiện tại kèm tọa độ bounding box đè lên và truyền phát sự kiện `"frame.processed"` qua WebSocket.
-- **[broadcaster.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/broadcaster.py)**: Quản lý danh sách các kết nối WebSocket trực tuyến từ các dashboard client. Chuyển đổi dữ liệu sự kiện thời gian thực sang JSON và truyền phát (broadcast) song song đến toàn bộ client đang kết nối.
-- **[manager.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/manager.py)**: Đóng vai trò điều phối tổng (StreamManager). Nhận lệnh từ API Router để khởi chạy hoặc dừng các luồng nền. Nó đảm bảo dọn dẹp tài nguyên thread cũ trước khi mở stream mới, đồng thời bắt giữ loop Asyncio hiện tại để truyền vào luồng Inference hỗ trợ gọi ngược (callback) lưu DB và phát WebSocket không đồng bộ.
-- **[schemas.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/schemas.py)**: Định nghĩa các Pydantic schema dành riêng cho kết nối WebSocket và điều khiển stream (`WebSocketEvent`, `StreamStartRequest`, `StreamStatusResponse`).
+- **[broadcaster.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/realtime/broadcaster.py)**: Quản lý danh sách các kết nối WebSocket trực tuyến từ các dashboard client. Chuyển đổi dữ liệu sự kiện thời gian thực sang JSON và truyền phát (broadcast) song song đến toàn bộ client đang kết nối.
+- **[manager.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/realtime/manager.py)**: Đóng vai trò điều phối tổng (StreamManager). Nhận lệnh từ API Router để khởi chạy hoặc dừng các luồng nền. Nó đảm bảo dọn dẹp tài nguyên thread cũ trước khi mở stream mới, đồng thời bắt giữ loop Asyncio hiện tại để truyền vào luồng Inference hỗ trợ gọi ngược (callback) lưu DB và phát WebSocket không đồng bộ.
+- **[schemas.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/realtime/schemas.py)**: Định nghĩa các Pydantic schema dành riêng cho kết nối WebSocket và điều khiển stream (`WebSocketEvent`, `StreamStartRequest`, `StreamStatusResponse`).
 
 ---
 

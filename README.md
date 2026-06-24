@@ -36,7 +36,7 @@ FastAPI cung cấp giao diện Swagger UI trực quan giúp kiểm thử và tra
 
 ### **Frontend**
 * **Framework:** React 19, Vite 6, TypeScript
-* **Styling & UI:** Tailwind CSS, CSS Variables ([default_shadcn_theme.css](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/default_shadcn_theme.css)) mang lại trải nghiệm dark/light mode mượt mà, hiện đại.
+* **Styling & UI:** Tailwind CSS, CSS Variables ([default_shadcn_theme.css](file:///home/leduc1009/BTL_AIT2004-2/frontend/default_shadcn_theme.css)) mang lại trải nghiệm dark/light mode mượt mà, hiện đại.
 * **Giao tiếp:** WebSockets (kết nối trực tiếp nhận stream ảnh Base64 & metadata), REST API (Axios).
 
 ### **Backend & Machine Learning**
@@ -141,20 +141,24 @@ graph TD
 
 4. **Tối Ưu Hóa CPU Cho Bộ Nhận Diện EasyOCR (CRAFT Bypass):**
    * Mặc định, EasyOCR sử dụng mô hình CRAFT rất nặng để phát hiện chữ trong ảnh rồi mới chạy mô hình nhận diện ký tự (CRNN).
-   * Do ảnh vùng biển số đã được YOLO khoanh vùng rất hẹp, hệ thống chuyển từ gọi hàm `.readtext()` sang `.recognize()` trong [easyocr_engine.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/services/ocr/easyocr_engine.py). 
+   * Do ảnh vùng biển số đã được YOLO khoanh vùng rất hẹp, hệ thống chuyển từ gọi hàm `.readtext()` sang `.recognize()` trong [easyocr_engine.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/ocr/easyocr_engine.py). 
    * Giải pháp này loại bỏ hoàn toàn mô hình CRAFT, giảm thời gian chạy OCR từ **~187ms xuống còn ~51ms (nhanh hơn 3.6 lần)** và loại bỏ triệt để lỗi phân mảnh ký tự biển số.
 
-5. **Đồng Thuận Theo Thời Gian & Cơ Chế Duyệt Sớm (Temporal Consensus & Auto-Accept):**
+5. **Mở Rộng Viền Cắt Biển Số (Bbox Padding):**
+   * Các chữ cái nằm ở mép sát viền biển số thường bị lỗi cắt phạm làm mất nét, dẫn đến OCR đọc sai.
+   * Hàm `crop_to_bbox` trong [yolo_detector.py](file:///home/leduc1009/BTL_AIT2004-2/apps/api/app/services/detection/yolo_detector.py) được cải tiến để tự động mở rộng vùng cắt thêm **5% diện tích lề** xung quanh biển số. Việc tạo "khoảng thở" này giúp giữ nguyên vẹn nét chữ ở mép biển số, nâng cao đáng kể độ chính xác của EasyOCR.
+
+6. **Đồng Thuận Theo Thời Gian & Cơ Chế Duyệt Sớm (Temporal Consensus & Auto-Accept):**
    * Để chống rung lắc chữ trên video, `TemporalValidator` tích lũy kết quả OCR của cùng 1 xe qua tối đa 8 khung hình và thực hiện biểu quyết đa số (majority voting). Biển số chỉ được xác nhận (`confirmed`) khi có tối thiểu 3 khung hình đồng thuận.
    * **Auto-Accept:** Nếu có một khung hình đạt độ tin cậy cực cao ($\ge 0.85$ qua cấu hình `auto_accept_threshold`) và khớp chuẩn định dạng Regex quốc gia, hệ thống sẽ xác nhận ngay lập tức mà không cần chờ tích lũy đủ 3 khung hình, giúp tối ưu hóa thời gian phản hồi.
 
-6. **Tự Động Sửa Lỗi Ký Tự OCR (OCR Corrections):**
+7. **Tự Động Sửa Lỗi Ký Tự OCR (OCR Corrections):**
    * Các chữ cái và chữ số thường bị nhận diện nhầm lẫn (như `O` thành `0`, `I` thành `1`, `Z` thành `2`, `S` thành `5`, `B` thành `8`).
    * Dựa vào cấu trúc vị trí ký tự chuẩn của biển số Brazil (Mercosul/Old), hệ thống tự động sửa đổi các ký tự này về dạng chuẩn. Nếu sửa lỗi thành công, hệ thống gán nhãn hợp lệ nhưng giảm nhẹ điểm số tự tin xuống `0.8` để phản ánh việc đã xử lý qua thuật toán.
 
-7. **Giới Hạn Luồng Tính Toán Tránh CPU Thrashing:**
+8. **Giới Hạn Luồng Tính Toán Tránh CPU Thrashing:**
    * Khi chạy các gói toán học tuyến tính (PyTorch, ONNX, OpenCV) trên CPU đa nhân trong Docker, hệ thống dễ bị nghẽn (Thrashing) do sinh quá nhiều luồng tính toán song song cạnh tranh tài nguyên.
-   * DevOps đã cấu hình giới hạn luồng về giá trị tĩnh `1` (`OMP_NUM_THREADS: 1`, `MKL_NUM_THREADS: 1`, v.v.) trong [docker-compose.yml](file:///d:/MySC/Python/BTL_AIT2004-2/docker-compose.yml#L47), giúp hệ thống hoạt động ổn định và mượt mà hơn.
+   * DevOps đã cấu hình giới hạn luồng về giá trị tĩnh `1` (`OMP_NUM_THREADS: 1`, `MKL_NUM_THREADS: 1`, v.v.) trong [docker-compose.yml](file:///home/leduc1009/BTL_AIT2004-2/docker-compose.yml#L47), giúp hệ thống hoạt động ổn định và mượt mà hơn.
 
 ---
 

@@ -25,34 +25,34 @@
 - **Upload video nhận diện:** Hỗ trợ kéo thả video tải lên, giới hạn kích thước tối đa 250MB.
 - **Giám sát thời gian thực (Real-time Live Feed):** Nhận hình ảnh video truyền phát trực tiếp (MJPEG nén) và thông tin bounding box chồng đè lên canvas từ WebSocket.
 - **Quản lý lịch sử và Chi tiết (CRUD History & Details):** Xem danh sách phân trang các lượt nhận diện, xóa lịch sử, phóng to hình ảnh/video kết quả, hiển thị biểu đồ độ tin cậy (Confidence).
-- **Giao diện Responsive & Dark Mode:** Tương thích tốt trên cả máy tính và thiết bị di động, tự động chuyển đổi theme màu hài hòa dựa trên Tailwind CSS và CSS variables định nghĩa trong [default_shadcn_theme.css](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/default_shadcn_theme.css).
+- **Giao diện Responsive & Dark Mode:** Tương thích tốt trên cả máy tính và thiết bị di động, tự động chuyển đổi theme màu hài hòa dựa trên Tailwind CSS và CSS variables định nghĩa trong [default_shadcn_theme.css](file:///home/leduc1009/BTL_AIT2004-2/frontend/default_shadcn_theme.css).
 
 ---
 
 ## 2. Chi tiết Luồng Giao diện & Thành phần chính
 
-Cấu trúc thư mục nguồn của Frontend nằm trong [frontend/src](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src).
+Cấu trúc thư mục nguồn của Frontend nằm trong [frontend/src](file:///home/leduc1009/BTL_AIT2004-2/frontend/src).
 
 ### 2.1. Quản trị Trung tâm (App Shell)
-Tệp [App.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/App.tsx) đóng vai trò điều hướng tuyến đường cục bộ (Router) và bao bọc trạng thái toàn cục:
+Tệp [App.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/App.tsx) đóng vai trò điều hướng tuyến đường cục bộ (Router) và bao bọc trạng thái toàn cục:
 - **Trình điều hướng (Simple Router):** Phân tích `window.location.pathname` qua hàm `currentRoute` để hiển thị trang chủ (`home`), chi tiết (`detail`), hoặc trang giám sát trực tiếp (`live`).
-- **UploadPanel ([UploadPanel](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/App.tsx#L216)):** Hộp kéo thả file video. Khi chọn file, nó kiểm tra hợp lệ về định dạng và kích thước trước khi gọi hàm tải lên backend. Sau khi tải lên thành công, giao diện tự động điều hướng người dùng sang trang chi tiết để theo dõi tiến độ xử lý.
-- **DetailView ([DetailView](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/App.tsx#L603)):** 
+- **UploadPanel ([UploadPanel](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/App.tsx#L216)):** Hộp kéo thả file video. Khi chọn file, nó kiểm tra hợp lệ về định dạng và kích thước trước khi gọi hàm tải lên backend. Sau khi tải lên thành công, giao diện tự động điều hướng người dùng sang trang chi tiết để theo dõi tiến độ xử lý.
+- **DetailView ([DetailView](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/App.tsx#L603)):** 
   - Trình chiếu Video hoặc ảnh biển số xe.
-  - Vẽ Bounding Box chứa biển số xe đè lên khung hình dựa trên tỷ lệ kích thước tự nhiên (`naturalWidth`/`naturalHeight`) của phương tiện được tải về qua component [BboxOverlay](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/App.tsx#L586).
-  - Bảng thống kê độ tin cậy [ConfidenceCard](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/App.tsx#L557) hiển thị chi tiết điểm số của ba yếu tố: Độ tin cậy phát hiện xe (Detection), độ tin cậy OCR và điểm số tổng hợp. Nếu điểm số thấp, banner màu cam cảnh báo `NEEDS_REVIEW` sẽ xuất hiện.
+  - Vẽ Bounding Box chứa biển số xe đè lên khung hình dựa trên tỷ lệ kích thước tự nhiên (`naturalWidth`/`naturalHeight`) của phương tiện được tải về qua component [BboxOverlay](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/App.tsx#L586).
+  - Bảng thống kê độ tin cậy [ConfidenceCard](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/App.tsx#L557) hiển thị chi tiết điểm số của ba yếu tố: Độ tin cậy phát hiện xe (Detection), độ tin cậy OCR và điểm số tổng hợp. Nếu điểm số thấp, banner màu cam cảnh báo `NEEDS_REVIEW` sẽ xuất hiện.
 
 ### 2.2. Trang Giám sát Realtime (Live Page)
-Trang [LivePage.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/LivePage.tsx) là bảng điều khiển camera giám sát trực tuyến thời gian thực, tích hợp ba thành phần chuyên biệt nằm trong thư mục [frontend/src/app/live/components](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/components):
-1. **VideoCanvas ([VideoCanvas.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/components/VideoCanvas.tsx)):** Nhận dữ liệu ảnh Base64 từ WebSocket vẽ trực tiếp lên thẻ canvas, đồng thời tự động vẽ các khung hình bao (Bounding Box) màu sắc khác nhau bao quanh xe và biển số xe tương ứng dựa trên trạng thái của đối tượng (Xác nhận: xanh lá; Đang chờ: vàng; Từ chối: đỏ).
-2. **StreamControls ([StreamControls.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/components/StreamControls.tsx)):** Cho phép nhập nguồn video (RTSP url hoặc đường dẫn file cục bộ) và điều khiển bật/tắt luồng stream lên backend.
-3. **ResultPanel ([ResultPanel.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/components/ResultPanel.tsx)):** Chia làm hai nửa: bên trái hiển thị danh sách các xe đang được theo vết trong khung hình hiện tại (Active Tracks); bên phải hiển thị lịch sử 10 biển số xe đã được xác nhận thành công gần nhất (đọc từ sự kiện `plate.confirmed`).
+Trang [LivePage.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/LivePage.tsx) là bảng điều khiển camera giám sát trực tuyến thời gian thực, tích hợp ba thành phần chuyên biệt nằm trong thư mục [frontend/src/app/live/components](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/components):
+1. **VideoCanvas ([VideoCanvas.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/components/VideoCanvas.tsx)):** Nhận dữ liệu ảnh Base64 từ WebSocket vẽ trực tiếp lên thẻ canvas, đồng thời tự động vẽ các khung hình bao (Bounding Box) màu sắc khác nhau bao quanh xe và biển số xe tương ứng dựa trên trạng thái của đối tượng (Xác nhận: xanh lá; Đang chờ: vàng; Từ chối: đỏ).
+2. **StreamControls ([StreamControls.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/components/StreamControls.tsx)):** Cho phép nhập nguồn video (RTSP url hoặc đường dẫn file cục bộ) và điều khiển bật/tắt luồng stream lên backend.
+3. **ResultPanel ([ResultPanel.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/components/ResultPanel.tsx)):** Chia làm hai nửa: bên trái hiển thị danh sách các xe đang được theo vết trong khung hình hiện tại (Active Tracks); bên phải hiển thị lịch sử 10 biển số xe đã được xác nhận thành công gần nhất (đọc từ sự kiện `plate.confirmed`).
 
 ---
 
 ## 3. Xử lý Dữ liệu Real-time qua WebSockets
 
-Cơ chế kết nối và xử lý thông điệp từ WebSocket của [LivePage.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/LivePage.tsx#L86) diễn ra như sau:
+Cơ chế kết nối và xử lý thông điệp từ WebSocket của [LivePage.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/LivePage.tsx#L86) diễn ra như sau:
 
 - **Khởi tạo Kết nối:** Khi trạng thái luồng chuyển sang `running` hoặc `starting`, hook `useEffect` sẽ khởi tạo kết nối WebSocket đến địa chỉ `ws://localhost:8000/ws/live` qua hàm `getWsUrl`.
 - **Lắng nghe Sự kiện (`onmessage`):**
@@ -67,7 +67,7 @@ Cơ chế kết nối và xử lý thông điệp từ WebSocket của [LivePage
 
 ## 4. Tích hợp API và Quản lý Trạng thái
 
-Toàn bộ các yêu cầu HTTP giao tiếp với Backend được đóng gói trong tệp tin [api.ts](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/api.ts).
+Toàn bộ các yêu cầu HTTP giao tiếp với Backend được đóng gói trong tệp tin [api.ts](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/api.ts).
 
 ### Các hàm gọi API chính:
 - `listRecognitions(page, pageSize)`: Lấy danh sách yêu cầu nhận dạng (phân trang).
@@ -106,10 +106,10 @@ Kế hoạch phát triển Agile của Frontend:
 
 Dưới đây là các tệp tin quan trọng nhất thuộc nhánh Frontend:
 
-* **Trang chủ & Tuyến đường:** [App.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/App.tsx) -> Router cục bộ, upload panel và detail panel.
-* **Trang giám sát camera:** [LivePage.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/LivePage.tsx) -> Quản lý kết nối WebSocket và cập nhật dashboard.
-* **Vẽ canvas camera:** [VideoCanvas.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/components/VideoCanvas.tsx).
-* **Điều khiển luồng:** [StreamControls.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/components/StreamControls.tsx).
-* **Kết quả theo vết & Lịch sử:** [ResultPanel.tsx](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/live/components/ResultPanel.tsx).
-* **Cổng gọi API:** [api.ts](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/api.ts).
-* **Khai báo kiểu TypeScript:** [types.ts](file:///d:/MySC/Python/BTL_AIT2004-2/frontend/src/app/types.ts).
+* **Trang chủ & Tuyến đường:** [App.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/App.tsx) -> Router cục bộ, upload panel và detail panel.
+* **Trang giám sát camera:** [LivePage.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/LivePage.tsx) -> Quản lý kết nối WebSocket và cập nhật dashboard.
+* **Vẽ canvas camera:** [VideoCanvas.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/components/VideoCanvas.tsx).
+* **Điều khiển luồng:** [StreamControls.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/components/StreamControls.tsx).
+* **Kết quả theo vết & Lịch sử:** [ResultPanel.tsx](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/live/components/ResultPanel.tsx).
+* **Cổng gọi API:** [api.ts](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/api.ts).
+* **Khai báo kiểu TypeScript:** [types.ts](file:///home/leduc1009/BTL_AIT2004-2/frontend/src/app/types.ts).
