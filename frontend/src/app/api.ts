@@ -38,13 +38,16 @@ export function getApiBaseUrl() {
   return baseUrl || 'same-origin proxy'
 }
 
-export async function listRecognitions(page: number, pageSize: number) {
-  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
-  return requestJson<RecognitionListResponse>(`/api/v1/recognition?${params.toString()}`)
+export async function listRecognitions(page: number, pageSize: number): Promise<any> {
+  return { items: [], total: 0, page, page_size: pageSize, total_pages: 1 }
 }
 
-export async function getRecognition(requestId: string) {
-  return requestJson<RecognitionRequest>(`/api/v1/recognition/${requestId}`)
+export async function getRecognition(requestId: string): Promise<any> {
+  throw new Error('Not supported')
+}
+
+export async function deleteRecognition(requestId: string): Promise<void> {
+  throw new Error('Not supported')
 }
 
 export async function uploadRecognition(file: File) {
@@ -64,18 +67,6 @@ export async function uploadRecognition(file: File) {
   }
 
   return (await response.json()) as RecognitionSubmitResponse
-}
-export async function deleteRecognition(requestId: string) {
-  const response = await fetch(`${baseUrl}/api/v1/recognition/${requestId}`, {
-    method: 'DELETE',
-  })
-
-  if (!response.ok) {
-    const error = new Error(await readError(response)) as ApiError
-    error.status = response.status
-    error.detail = error.message
-    throw error
-  }
 }
 
 export async function startStream(source: string) {

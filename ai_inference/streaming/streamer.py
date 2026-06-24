@@ -283,8 +283,21 @@ def stream(camera_id, link):
         if "cap" in locals() and cap.running:
             cap.stop()
         if "bbox_out_queue" in locals():
+            if camera_id == "stream_0":
+                try:
+                    bbox_out_queue.put_nowait({
+                        "topic": "ui.live.frame",
+                        "payload": {
+                            "type": "stream.stopped",
+                            "data": {"source": link}
+                        }
+                    })
+                except queue.Full:
+                    pass
             try:
                 bbox_out_queue.put_nowait(None)
             except queue.Full:
                 pass
         redis_sync.delete(f"stream_pid:{camera_id}")
+        if camera_id == "stream_0":
+            redis_sync.hset("stream:status", mapping={"status": "stopped", "error_message": ""})

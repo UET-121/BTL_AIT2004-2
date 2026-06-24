@@ -67,9 +67,8 @@ async def main():
 
     await redis_client.init()
     ai_config = await redis_client.hgetall("ai_global_config")
-    if ai_config and "license_plate_match_threshold" in ai_config:
-        from .handlers.ai_handler import update_license_plate_threshold
-        update_license_plate_threshold(float(ai_config["license_plate_match_threshold"]))
+    # if ai_config and "license_plate_match_threshold" in ai_config:
+    #     pass
 
 
     async with connection:

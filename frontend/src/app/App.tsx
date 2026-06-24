@@ -41,6 +41,11 @@ const MEDIA_VIDEO_RE = /\.(mp4|avi|mov|mpeg|mkv)(?:$|\?)/i
 
 function resolveMediaUrl(url: string) {
   if (!url) return url
+  // Rewrite internal docker network URL to public relative path,
+  // which will be proxied by Nginx
+  if (url.includes('http://minio:9000')) {
+    url = url.replace('http://minio:9000', '')
+  }
   if (/^(https?:|data:|blob:|\/\/)/i.test(url)) return url
   if (url.startsWith('/')) {
     const apiBase = getApiBaseUrl()
@@ -957,10 +962,11 @@ export default function App() {
   const handleUpload = async (payload: { file: File; previewUrl: string }) => {
     setUploadBusy(true)
     try {
-      await uploadRecognition(payload.file)
+      const response = await uploadRecognition(payload.file)
       
       const isVid = payload.file.type.startsWith('video/') || payload.file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
-      if (isVid) {
+      if (isVid && response.image_url) {
+        import('./api').then(({ startStream }) => startStream(response.image_url))
         navigate({ view: 'live' })
         applyToast('Đang phát video upload dạng stream realtime')
       } else {
@@ -1066,66 +1072,7 @@ export default function App() {
         <>
           <UploadPanel onSubmit={handleUpload} busy={uploadBusy} />
 
-          <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6">
-            <div className="mb-3 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-              <div>
-                <h1 className="text-2xl font-semibold">Lịch sử nhận diện</h1>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Activity size={14} />
-                <span>{processingCount > 0 ? 'Auto-refresh đang chạy' : 'Không có job đang xử lý'}</span>
-              </div>
-            </div>
 
-            <RequestList
-              loading={listLoading}
-              items={listItems}
-              onOpen={(id) => navigate({ view: 'detail', id })}
-              onDelete={handleDeleteRequest}
-            />
-
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={page <= 1}
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                  className="border border-border px-3 py-2 disabled:opacity-40"
-                >
-                  <ChevronLeft className="inline" size={16} /> Prev
-                </button>
-                <button
-                  type="button"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-                  className="border border-border px-3 py-2 disabled:opacity-40"
-                >
-                  Next <ChevronRight className="inline" size={16} />
-                </button>
-                <span className="font-mono text-muted-foreground">
-                  Page {page}/{totalPages} · {listTotal} items
-                </span>
-              </div>
-
-              <label className="text-muted-foreground">
-                Page size{' '}
-                <select
-                  value={pageSize}
-                  onChange={(event) => {
-                    setPageSize(Number(event.target.value))
-                    setPage(1)
-                  }}
-                  className="ml-2 border border-border bg-input px-2 py-2 text-foreground"
-                >
-                  {PAGE_SIZES.map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </main>
         </>
       )}
 

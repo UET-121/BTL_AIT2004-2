@@ -26,16 +26,6 @@ from shared.config.logger import log
 from shared.core.redis import redis_client
 from shared.models import Camera, RecognitionLog
 
-from .api.vision import router as vision_router
-from .api.internal import router as internal_router
-from .api.login import router as login_router
-from .api.detection_log import router as detection_log_router
-from .api.recognition_logs import router as recognition_log_router
-from .api.profile import router as profile_router
-from .api.ai_config import router as config_router
-from .api.analytics import router as analytics_router
-from .api.webhooks import router as webhook_router
-from .api.users import router as users_router
 from .api.streams import router as streams_router
 from .api.recognition_api import router as recognition_api_router
 from .middleware.rate_limit import limiter
@@ -190,16 +180,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(vision_router)
-app.include_router(internal_router)
-app.include_router(login_router)
-app.include_router(detection_log_router)
-app.include_router(recognition_log_router)
-app.include_router(profile_router)
-app.include_router(config_router)
-app.include_router(analytics_router)
-app.include_router(webhook_router)
-app.include_router(users_router)
 app.include_router(streams_router)
 app.include_router(recognition_api_router)
 

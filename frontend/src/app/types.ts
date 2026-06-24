@@ -32,6 +32,7 @@ export interface RecognitionSubmitResponse {
   request_id: string
   status: RecognitionStatus
   created_at: string
+  image_url: string
 }
 
 export interface RecognitionListResponse {

@@ -39,6 +39,25 @@ def ensure_bucket_exists():
                 else:
                     print(f"[X] Lỗi khi kiểm tra bucket từ MinIO: {e}")
                     raise e
+            
+            import json
+            policy = {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "PublicReadGetObject",
+                        "Effect": "Allow",
+                        "Principal": "*",
+                        "Action": ["s3:GetObject"],
+                        "Resource": [f"arn:aws:s3:::{BUCKET_NAME}/*"]
+                    }
+                ]
+            }
+            try:
+                s3_client.put_bucket_policy(Bucket=BUCKET_NAME, Policy=json.dumps(policy))
+            except Exception as e:
+                print(f"[X] Lỗi set public bucket policy: {e}")
+
             lifecycle_config = {
                 "Rules": [
                     {
