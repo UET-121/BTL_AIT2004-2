@@ -181,7 +181,7 @@ function Header({
           </div>
           <div>
             <p className="text-sm font-semibold leading-tight">License Plate Admin</p>
-            <p className="font-mono text-[11px] text-muted-foreground">HyperCan Team</p>
+            <p className="font-mono text-[11px] text-muted-foreground">HyperCane Team</p>
           </div>
         </button>
 
@@ -650,11 +650,11 @@ function DetailView({
 
   const bboxStyle = natural && item.bounding_box
     ? {
-        left: `${(item.bounding_box.x / natural.width) * 100}%`,
-        top: `${(item.bounding_box.y / natural.height) * 100}%`,
-        width: `${(item.bounding_box.width / natural.width) * 100}%`,
-        height: `${(item.bounding_box.height / natural.height) * 100}%`,
-      }
+      left: `${(item.bounding_box.x / natural.width) * 100}%`,
+      top: `${(item.bounding_box.y / natural.height) * 100}%`,
+      width: `${(item.bounding_box.width / natural.width) * 100}%`,
+      height: `${(item.bounding_box.height / natural.height) * 100}%`,
+    }
     : null
 
   return (
@@ -751,11 +751,10 @@ function DetailView({
                 </span>
               )}
               {item.direction && (
-                <span className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold ring-1 ${
-                  item.direction === 'IN'
+                <span className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold ring-1 ${item.direction === 'IN'
                     ? 'bg-blue-500/15 text-blue-200 ring-blue-400/25'
                     : 'bg-purple-500/15 text-purple-200 ring-purple-400/25'
-                }`}>
+                  }`}>
                   {item.direction === 'IN' ? <ArrowDownLeft size={11} /> : <ArrowUpRight size={11} />}
                   {item.direction === 'IN' ? 'Vào' : 'Ra'}
                 </span>
@@ -958,7 +957,7 @@ export default function App() {
     setUploadBusy(true)
     try {
       await uploadRecognition(payload.file)
-      
+
       const isVid = payload.file.type.startsWith('video/') || payload.file.name.match(/\.(mp4|avi|mov|mpeg|mkv)/i)
       if (isVid) {
         navigate({ view: 'live' })
@@ -1018,22 +1017,20 @@ export default function App() {
             <button
               type="button"
               onClick={() => navigate({ view: 'home' })}
-              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${
-                route.view === 'home'
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${route.view === 'home'
                   ? 'border-accent text-accent'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
+                }`}
             >
               Lịch sử Upload
             </button>
             <button
               type="button"
               onClick={() => navigate({ view: 'live' })}
-              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${
-                route.view === 'live'
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${route.view === 'live'
                   ? 'border-accent text-accent'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
+                }`}
             >
               Giám sát Live
             </button>
@@ -1140,13 +1137,12 @@ export default function App() {
 
       {toast && (
         <div
-          className={`fixed bottom-4 right-4 border px-4 py-3 text-sm shadow-xl ${
-            toast.kind === 'error'
+          className={`fixed bottom-4 right-4 border px-4 py-3 text-sm shadow-xl ${toast.kind === 'error'
               ? 'border-red-400/30 bg-red-500/15 text-red-100'
               : toast.kind === 'warning'
                 ? 'border-orange-400/30 bg-orange-500/15 text-orange-100'
                 : 'border-emerald-400/30 bg-emerald-500/15 text-emerald-100'
-          }`}
+            }`}
         >
           {toast.message}
         </div>
