@@ -12,6 +12,7 @@ def capture_thread_fn(source: str | int) -> None:
         actual_source = int(source)
 
     logger.info("Starting capture thread with source: %s", source)
+    # Try to open with FFMPEG/ANY and enable HW Acceleration if available
     cap = cv2.VideoCapture(actual_source)
     if not cap.isOpened():
         err_msg = f"Failed to open video source: {source}"
@@ -19,29 +20,59 @@ def capture_thread_fn(source: str | int) -> None:
         shared_state.set_error(err_msg)
         return
 
+    # Attempt to enable hardware acceleration (GPU decode)
+    try:
+        cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
+    except Exception:
+        pass
+
+    # Check if input is a local video file (to pace frame reading)
+    is_video_file = False
+    if isinstance(actual_source, str):
+        is_rtsp = actual_source.startswith("rtsp://") or actual_source.startswith("rtmp://")
+        is_http = actual_source.startswith("http://") or actual_source.startswith("https://")
+        if not (is_rtsp or is_http):
+            is_video_file = True
+        else:
+            # For live streams, minimize buffer to eliminate latency buildup
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+
     # Try to get source FPS
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps <= 0 or fps > 100:
         fps = 30.0
     frame_delay = 1.0 / fps
     
-    # Check if input is a local video file (to pace frame reading)
-    is_video_file = False
-    if isinstance(actual_source, str):
-        # Simplistic check for files vs RTSP/HTTP streams
-        is_rtsp = actual_source.startswith("rtsp://") or actual_source.startswith("rtmp://")
-        is_http = actual_source.startswith("http://") or actual_source.startswith("https://")
-        if not (is_rtsp or is_http):
-            is_video_file = True
+    # Frame skipping to let the system "breathe" (esp. without Triton)
+    # E.g., if FPS is 30, processing every 3rd frame gives 10 FPS effective.
+    from app.shared.config import get_settings
+    settings = get_settings()
+    target_fps = settings.target_fps
+    frame_skip = max(1, int(fps / target_fps))
 
-    logger.info("Video source opened. FPS: %.2f (delay: %.4f), is_video_file: %s", fps, frame_delay, is_video_file)
+    logger.info("Video source opened. Source FPS: %.2f (delay: %.4f), is_video_file: %s, Frame Skip: %d (Target FPS: %.2f)", 
+                fps, frame_delay, is_video_file, frame_skip, fps/frame_skip)
 
     consecutive_failures = 0
     max_failures = 15
+    frame_counter = 0
 
     while not shared_state.stop_event.is_set():
         start_time = time.perf_counter()
-        ret, frame = cap.read()
+        
+        # Fast-forward / Grab frames to skip
+        grab_success = True
+        for _ in range(frame_skip - 1):
+            if not cap.grab():
+                grab_success = False
+                break
+                
+        if not grab_success:
+            ret = False
+        else:
+            # Decode the actual frame we want to process
+            ret, frame = cap.read()
+            
         if not ret:
             consecutive_failures += 1
             logger.warning("Failed to read frame from source (failure %d/%d)", consecutive_failures, max_failures)
@@ -56,6 +87,8 @@ def capture_thread_fn(source: str | int) -> None:
                     time.sleep(2.0)
                     cap = cv2.VideoCapture(actual_source)
                     if cap.isOpened():
+                        cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
                         logger.info("Reconnection to stream source successful.")
                         consecutive_failures = 0
                     else:
@@ -70,9 +103,9 @@ def capture_thread_fn(source: str | int) -> None:
         shared_state.update_frame(frame)
 
         if is_video_file:
-            # Limit read speed to simulate real-time playback for video files
+            # Giới hạn tốc độ đọc theo thời gian thực (nhân với frame_skip vì ta đã tua qua số frame tương ứng)
             elapsed = time.perf_counter() - start_time
-            sleep_time = max(0.001, frame_delay - elapsed)
+            sleep_time = max(0.001, (frame_delay * frame_skip) - elapsed)
             time.sleep(sleep_time)
         else:
             # Yield CPU execution slice for RTSP to prevent thread starvation

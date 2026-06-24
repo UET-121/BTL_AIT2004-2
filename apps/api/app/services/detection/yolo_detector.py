@@ -299,6 +299,18 @@ class YoloPlateDetector(PlateDetector):
         ]
 
 
-def crop_to_bbox(image: np.ndarray, bbox: BoundingBox) -> np.ndarray:
+def crop_to_bbox(image: np.ndarray, bbox: BoundingBox, padding: float = 0.05) -> np.ndarray:
+    h_img, w_img = image.shape[:2]
     x, y, w, h = bbox.x, bbox.y, bbox.width, bbox.height
-    return image[y : y + h, x : x + w].copy()
+    
+    # Calculate padding pixels
+    pad_x = int(w * padding)
+    pad_y = int(h * padding)
+    
+    # Apply padding with boundaries
+    x1 = max(0, x - pad_x)
+    y1 = max(0, y - pad_y)
+    x2 = min(w_img, x + w + pad_x)
+    y2 = min(h_img, y + h + pad_y)
+    
+    return image[y1 : y2, x1 : x2].copy()

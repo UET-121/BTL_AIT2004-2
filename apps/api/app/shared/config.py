@@ -48,6 +48,7 @@ class Settings(BaseSettings):
         default="models/onnx/yolov8-plate-v1.onnx", alias="ONNX_MODEL_PATH"
     )
     detection_decimation: int = Field(default=2, alias="DETECTION_DECIMATION")
+    target_fps: float = Field(default=10.0, alias="TARGET_FPS")
 
 
     # OCR

@@ -44,7 +44,7 @@ def run_async(coro, loop: asyncio.AbstractEventLoop | None) -> None:
         pass
 
 
-async def save_confirmed_request(plate_text: str, confidence: float, bbox: any, frame: np.ndarray, vehicle_conf: float = 1.0) -> None:
+async def save_confirmed_request(plate_text: str, confidence: float, bbox: any, frame_bytes: bytes, vehicle_conf: float = 1.0) -> None:
     """Asynchronously saves a confirmed plate recognition to storage and the PostgreSQL database."""
     try:
         # Try to extract parent request ID from the source path
@@ -61,17 +61,11 @@ async def save_confirmed_request(plate_text: str, confidence: float, bbox: any, 
                 pass
 
         logger.info("save_confirmed_request: Starting save for plate_text=%r, parent_id=%s", plate_text, parent_id)
-
-        # Convert frame to bytes
-        success, buffer = cv2.imencode('.jpg', frame)
-        if not success:
-            logger.error("save_confirmed_request: Failed to encode frame for database save")
-            return
         
         # Save frame to storage service
         storage = get_storage_service()
         filename = f"realtime_{uuid.uuid4()}.jpg"
-        image_url = await storage.save(filename, buffer.tobytes())
+        image_url = await storage.save(filename, frame_bytes)
         logger.info("save_confirmed_request: Frame uploaded successfully. URL=%s", image_url)
 
         # Map bbox to dict format
@@ -115,6 +109,9 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
     """Inference loop running in a background thread to process captured frames."""
     logger.info("Starting inference loop thread...")
 
+    import concurrent.futures
+    ocr_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
     detector = get_detector()
     ocr = get_ocr_engine()
     preprocessor = PreprocessingPipeline()
@@ -124,6 +121,7 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
     from app.shared.config import get_settings
     settings = get_settings()
     decimation = max(1, getattr(settings, "detection_decimation", 2))
+    target_fps = getattr(settings, "target_fps", 10.0)
     processed_count = 0
 
     # Unique vehicle tracking state
@@ -134,7 +132,8 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
 
     last_processed_frame_id = -1
     last_broadcast_time = 0.0
-    broadcast_interval = 0.1  # Throttle to max 10 FPS for video websocket transmission
+    # Sync broadcast throttle with TARGET_FPS so the stream looks smoother
+    broadcast_interval = max(0.033, 1.0 / target_fps)
 
     # FPS tracking variables
     last_frame_time = None
@@ -171,21 +170,19 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
         run_detection = (processed_count % decimation == 1)
 
         if run_detection:
-            # 1. Run detection on the bottom half of the frame to optimize CPU usage
+            # 1. Run detection on the full frame
             h_orig, w_orig = frame.shape[:2]
-            crop_y_start = h_orig // 2
-            bottom_half = frame[crop_y_start:, :]
+            detections = detector.detect_vehicles_and_plates(frame)
 
-            detections = detector.detect_vehicles_and_plates(bottom_half)
-
-            # Shift detection coordinates back to the original full frame scale
+            # Optional: We no longer need to shift coordinates because we didn't crop.
+            # But we should still clamp them just in case.
             for det in detections:
                 v_bbox = det["vehicle_bbox"]
                 p_bbox = det["plate_bbox"]
 
                 det["vehicle_bbox"] = BoundingBox(
                     x=v_bbox.x,
-                    y=v_bbox.y + crop_y_start,
+                    y=v_bbox.y,
                     width=v_bbox.width,
                     height=v_bbox.height,
                     confidence=v_bbox.confidence,
@@ -194,12 +191,13 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
 
                 det["plate_bbox"] = BoundingBox(
                     x=p_bbox.x,
-                    y=p_bbox.y + crop_y_start,
+                    y=p_bbox.y,
                     width=p_bbox.width,
                     height=p_bbox.height,
                     confidence=p_bbox.confidence,
                     class_name=p_bbox.class_name
                 ).clamp_to_image(h_orig, w_orig)
+            
             if detections:
                 real_dets = [d for d in detections if getattr(d.get("vehicle_bbox"), "class_name", "") != "full_image"]
                 logger.info("Frame %d: detected %d objects (%d real vehicles/plates)", 
@@ -228,94 +226,113 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
                 # Throttle OCR frequency to once every 3 attempts to save CPU
                 ocr_attempts = getattr(track, "ocr_attempts", 0)
                 track.ocr_attempts = ocr_attempts + 1
-                if ocr_attempts % 3 != 0:
-                    continue
-
-                # Crop plate region from original frame
-                plate_bbox = getattr(track, "plate_bbox", track.bbox)
-                crop = crop_to_bbox(frame, plate_bbox)
                 
-                # Preprocess and run OCR
-                preprocessed = preprocessor.run(crop)
-                
-                logger.info("Track %d (attempt %d): Running OCR...", track_id, track.ocr_attempts)
-                ocr_result = ocr.read(preprocessed.image)
-                logger.info("Track %d: OCR read text=%r, conf=%.2f", track_id, ocr_result.text, ocr_result.confidence)
+                ocr_future = getattr(track, "ocr_future", None)
 
-                if ocr_result.text:
-                    status, consensus_text, confidence = temporal_validator.add_candidate(
-                        track, ocr_result.text, ocr_result.confidence
-                    )
-                    logger.info("Track %d: TemporalValidator add_candidate -> status=%s, consensus=%r, consensus_conf=%.2f", 
-                                track_id, status, consensus_text, confidence)
-
-                    # Trigger events based on state transitions
-                    if status == "confirmed" and not track.is_confirmed:
-                        track.is_confirmed = True
-                        logger.info("Plate CONFIRMED: %s (Track: %d, Conf: %.2f)", consensus_text, track_id, confidence)
+                # Submit to ThreadPool if not currently running
+                if ocr_future is None:
+                    if ocr_attempts % 3 == 1: # Trigger on 1st, 4th, 7th attempt...
+                        plate_bbox = getattr(track, "plate_bbox", track.bbox)
+                        crop = crop_to_bbox(frame, plate_bbox)
+                        preprocessed = preprocessor.run(crop)
                         
-                        # Check if plate has already been confirmed in this session
-                        if consensus_text in plate_to_vehicle_id:
-                            old_vid = plate_to_vehicle_id[consensus_text]
-                            curr_vid = track_id_to_vehicle_id[track_id]
-                            if curr_vid != old_vid:
-                                # Merge track to the existing vehicle ID
-                                track_id_to_vehicle_id[track_id] = old_vid
-                                # Discard the redundant vehicle ID from our count
-                                recorded_vehicle_ids.discard(curr_vid)
-                                logger.info("Merged Track %d (Vehicle ID %d) into existing Vehicle ID %d for plate %s",
-                                            track_id, curr_vid, old_vid, consensus_text)
-                        else:
-                            # First time seeing this plate
-                            plate_to_vehicle_id[consensus_text] = track_id_to_vehicle_id[track_id]
-                            
-                            # Emit plate.confirmed event
-                            event_payload = {
-                                "type": "plate.confirmed",
-                                "timestamp": timestamp_str,
-                                "camera_id": "cam-01",
-                                "frame_id": frame_id,
-                                "track_id": track_id,
-                                "plate_text": consensus_text,
-                                "confidence": int(confidence * 100),
-                                "vehicle_conf": int(track.vehicle_conf * 100),
-                                "plate_conf": int(track.plate_conf * 100),
-                                "bbox": {
-                                    "x": int(plate_bbox.x),
-                                    "y": int(plate_bbox.y),
-                                    "width": int(plate_bbox.width),
-                                    "height": int(plate_bbox.height)
-                                }
-                            }
-                            logger.info("Track %d: Broadcasting plate.confirmed event and saving to DB...", track_id)
-                            run_async(broadcaster.broadcast(event_payload), loop)
-                            # Save to database
-                            run_async(
-                                save_confirmed_request(consensus_text, confidence, plate_bbox, frame, track.vehicle_conf),
-                                loop
-                            )
+                        # We save plate_bbox so the async completion can use the correct coordinates
+                        track.ocr_plate_bbox_context = plate_bbox
+                        
+                        logger.debug("Track %d (attempt %d): Submitting OCR to thread pool...", track_id, track.ocr_attempts)
+                        track.ocr_future = ocr_pool.submit(ocr.read, preprocessed.image)
+                        
+                # Check if an async OCR task has finished
+                elif ocr_future.done():
+                    try:
+                        ocr_result = ocr_future.result()
+                        track.ocr_future = None
+                        logger.info("Track %d: OCR read text=%r, conf=%.2f", track_id, ocr_result.text, ocr_result.confidence)
 
-                    elif status == "rejected" and not getattr(track, "is_rejected", False):
-                        track.is_rejected = True
-                        logger.info("Plate REJECTED: %s (Track: %d)", consensus_text, track_id)
-                        event_payload = {
-                            "type": "plate.rejected",
-                            "timestamp": timestamp_str,
-                            "camera_id": "cam-01",
-                            "frame_id": frame_id,
-                            "track_id": track_id,
-                            "plate_text": consensus_text,
-                            "confidence": int(confidence * 100),
-                            "vehicle_conf": int(track.vehicle_conf * 100),
-                            "plate_conf": int(track.plate_conf * 100),
-                            "bbox": {
-                                "x": int(plate_bbox.x),
-                                "y": int(plate_bbox.y),
-                                "width": int(plate_bbox.width),
-                                "height": int(plate_bbox.height)
-                            }
-                        }
-                        run_async(broadcaster.broadcast(event_payload), loop)
+                        if ocr_result.text:
+                            status, consensus_text, confidence = temporal_validator.add_candidate(
+                                track, ocr_result.text, ocr_result.confidence
+                            )
+                            logger.info("Track %d: TemporalValidator add_candidate -> status=%s, consensus=%r, consensus_conf=%.2f", 
+                                        track_id, status, consensus_text, confidence)
+
+                            # Retrieve the plate_bbox context that was used for this OCR run
+                            plate_bbox = getattr(track, "ocr_plate_bbox_context", track.bbox)
+
+                            # Trigger events based on state transitions
+                            if status == "confirmed" and not track.is_confirmed:
+                                track.is_confirmed = True
+                                logger.info("Plate CONFIRMED: %s (Track: %d, Conf: %.2f)", consensus_text, track_id, confidence)
+                                
+                                # Check if plate has already been confirmed in this session
+                                if consensus_text in plate_to_vehicle_id:
+                                    old_vid = plate_to_vehicle_id[consensus_text]
+                                    curr_vid = track_id_to_vehicle_id[track_id]
+                                    if curr_vid != old_vid:
+                                        track_id_to_vehicle_id[track_id] = old_vid
+                                        recorded_vehicle_ids.discard(curr_vid)
+                                        logger.info("Merged Track %d (Vehicle ID %d) into existing Vehicle ID %d for plate %s",
+                                                    track_id, curr_vid, old_vid, consensus_text)
+                                else:
+                                    # First time seeing this plate
+                                    plate_to_vehicle_id[consensus_text] = track_id_to_vehicle_id[track_id]
+                                    
+                                    # Emit plate.confirmed event
+                                    event_payload = {
+                                        "type": "plate.confirmed",
+                                        "timestamp": timestamp_str,
+                                        "camera_id": "cam-01",
+                                        "frame_id": frame_id,
+                                        "track_id": track_id,
+                                        "plate_text": consensus_text,
+                                        "confidence": int(confidence * 100),
+                                        "vehicle_conf": int(track.vehicle_conf * 100),
+                                        "plate_conf": int(track.plate_conf * 100),
+                                        "bbox": {
+                                            "x": int(plate_bbox.x),
+                                            "y": int(plate_bbox.y),
+                                            "width": int(plate_bbox.width),
+                                            "height": int(plate_bbox.height)
+                                        }
+                                    }
+                                    logger.info("Track %d: Broadcasting plate.confirmed event and saving to DB...", track_id)
+                                    run_async(broadcaster.broadcast(event_payload), loop)
+                                    
+                                    # Convert frame to bytes synchronously here to prevent blocking asyncio loop
+                                    success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                                    if success:
+                                        frame_bytes = buffer.tobytes()
+                                        run_async(
+                                            save_confirmed_request(consensus_text, confidence, plate_bbox, frame_bytes, track.vehicle_conf),
+                                            loop
+                                        )
+                                    else:
+                                        logger.error("Failed to encode frame before saving confirmed request")
+
+                            elif status == "rejected" and not getattr(track, "is_rejected", False):
+                                track.is_rejected = True
+                                logger.info("Plate REJECTED: %s (Track: %d)", consensus_text, track_id)
+                                event_payload = {
+                                    "type": "plate.rejected",
+                                    "timestamp": timestamp_str,
+                                    "camera_id": "cam-01",
+                                    "frame_id": frame_id,
+                                    "track_id": track_id,
+                                    "plate_text": consensus_text,
+                                    "confidence": int(confidence * 100),
+                                    "vehicle_conf": int(track.vehicle_conf * 100),
+                                    "plate_conf": int(track.plate_conf * 100),
+                                    "bbox": {
+                                        "x": int(plate_bbox.x),
+                                        "y": int(plate_bbox.y),
+                                        "width": int(plate_bbox.width),
+                                        "height": int(plate_bbox.height)
+                                    }
+                                }
+                                run_async(broadcaster.broadcast(event_payload), loop)
+                    except Exception as e:
+                        track.ocr_future = None
+                        logger.error("Track %d: Async OCR execution failed: %s", track_id, e)
 
         # 4. Broadcast live frame + bounding box overlay to active clients
         now = time.perf_counter()
@@ -457,6 +474,9 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
             logger.warning("Failed to clean up local video file %s: %s", source_str, clean_exc)
 
     logger.info("Inference loop thread stopped.")
+    
+    # Gracefully shut down OCR thread pool
+    ocr_pool.shutdown(wait=False)
 
 
 def datetime_now_iso() -> str:

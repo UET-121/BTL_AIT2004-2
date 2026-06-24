@@ -13,7 +13,5 @@ easyocr
 ultralytics
 minio>=7.2.0
 psycopg2-binary>=2.9.0
-# GPU/CUDA and CPU unified dependencies (automatically uses GPU if CUDA is available, otherwise falls back to CPU)
+# GPU/CUDA and CPU unified dependencies
 onnx
-onnxruntime-gpu
-
