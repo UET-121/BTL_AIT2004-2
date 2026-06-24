@@ -121,6 +121,11 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
     tracker = IoUTracker()
     temporal_validator = TemporalValidator(min_confirm_count=3)
 
+    from app.shared.config import get_settings
+    settings = get_settings()
+    decimation = max(1, getattr(settings, "detection_decimation", 2))
+    processed_count = 0
+
     # Unique vehicle tracking state
     track_id_to_vehicle_id = {}
     plate_to_vehicle_id = {}
@@ -142,6 +147,7 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
             continue
 
         last_processed_frame_id = frame_id
+        processed_count += 1
 
         # Resize frame to 1280x720 for faster CPU execution (e.g. if original is 4K)
         h, w = frame.shape[:2]
@@ -161,42 +167,51 @@ def inference_loop_fn(loop: asyncio.AbstractEventLoop | None = None) -> None:
 
         fps = 1.0 / (sum(frame_times) / len(frame_times)) if frame_times else 0.0
 
-        # 1. Run detection on the bottom half of the frame to optimize CPU usage
-        h_orig, w_orig = frame.shape[:2]
-        crop_y_start = h_orig // 2
-        bottom_half = frame[crop_y_start:, :]
+        # Run detection conditionally based on decimation setting
+        run_detection = (processed_count % decimation == 1)
 
-        detections = detector.detect_vehicles_and_plates(bottom_half)
+        if run_detection:
+            # 1. Run detection on the bottom half of the frame to optimize CPU usage
+            h_orig, w_orig = frame.shape[:2]
+            crop_y_start = h_orig // 2
+            bottom_half = frame[crop_y_start:, :]
 
-        # Shift detection coordinates back to the original full frame scale
-        for det in detections:
-            v_bbox = det["vehicle_bbox"]
-            p_bbox = det["plate_bbox"]
+            detections = detector.detect_vehicles_and_plates(bottom_half)
 
-            det["vehicle_bbox"] = BoundingBox(
-                x=v_bbox.x,
-                y=v_bbox.y + crop_y_start,
-                width=v_bbox.width,
-                height=v_bbox.height,
-                confidence=v_bbox.confidence,
-                class_name=v_bbox.class_name
-            ).clamp_to_image(h_orig, w_orig)
+            # Shift detection coordinates back to the original full frame scale
+            for det in detections:
+                v_bbox = det["vehicle_bbox"]
+                p_bbox = det["plate_bbox"]
 
-            det["plate_bbox"] = BoundingBox(
-                x=p_bbox.x,
-                y=p_bbox.y + crop_y_start,
-                width=p_bbox.width,
-                height=p_bbox.height,
-                confidence=p_bbox.confidence,
-                class_name=p_bbox.class_name
-            ).clamp_to_image(h_orig, w_orig)
-        if detections:
-            real_dets = [d for d in detections if getattr(d.get("vehicle_bbox"), "class_name", "") != "full_image"]
-            logger.info("Frame %d: detected %d objects (%d real vehicles/plates)", 
-                        frame_id, len(detections), len(real_dets))
+                det["vehicle_bbox"] = BoundingBox(
+                    x=v_bbox.x,
+                    y=v_bbox.y + crop_y_start,
+                    width=v_bbox.width,
+                    height=v_bbox.height,
+                    confidence=v_bbox.confidence,
+                    class_name=v_bbox.class_name
+                ).clamp_to_image(h_orig, w_orig)
 
-        # 2. Update tracker
-        tracker.update(detections, frame_id)
+                det["plate_bbox"] = BoundingBox(
+                    x=p_bbox.x,
+                    y=p_bbox.y + crop_y_start,
+                    width=p_bbox.width,
+                    height=p_bbox.height,
+                    confidence=p_bbox.confidence,
+                    class_name=p_bbox.class_name
+                ).clamp_to_image(h_orig, w_orig)
+            if detections:
+                real_dets = [d for d in detections if getattr(d.get("vehicle_bbox"), "class_name", "") != "full_image"]
+                logger.info("Frame %d: detected %d objects (%d real vehicles/plates)", 
+                            frame_id, len(detections), len(real_dets))
+
+            # 2. Update tracker with new detections
+            tracker.update(detections, frame_id)
+        else:
+            # Skip detection. Keep all currently active tracks alive at their current positions.
+            for track in tracker.tracks.values():
+                if track.last_seen == frame_id - 1:
+                    track.last_seen = frame_id
 
         # 3. Process active tracks in the current frame
         timestamp_str = datetime_now_iso()

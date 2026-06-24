@@ -8,17 +8,17 @@ def test_temporal_validator_consensus():
     bbox = BoundingBox(x=10, y=10, width=50, height=20, confidence=0.9)
     track = Track(track_id=1, bbox=bbox, frame_id=1)
 
-    # 1. Add first candidate - should be pending
-    status, plate, conf = validator.add_candidate(track, "ABC1D23", 0.9)
+    # 1. Add first candidate - should be pending (confidence < 0.85)
+    status, plate, conf = validator.add_candidate(track, "ABC1D23", 0.8)
     assert status == "pending"
     assert plate == "ABC1D23"
-    assert conf == 0.9
+    assert conf == 0.8
 
     # 2. Add second candidate - should still be pending
     status, plate, conf = validator.add_candidate(track, "ABC1D23", 0.8)
     assert status == "pending"
     assert plate == "ABC1D23"
-    assert abs(conf - 0.85) < 0.001
+    assert abs(conf - 0.8) < 0.001
 
     # 3. Add third candidate (different text) - should still be pending
     status, plate, conf = validator.add_candidate(track, "ABC1D24", 0.7)
@@ -26,10 +26,23 @@ def test_temporal_validator_consensus():
     assert plate == "ABC1D23"  # most common is still ABC1D23 (2 votes vs 1)
 
     # 4. Add third matching candidate - should reach min_confirm_count = 3 and confirm
-    status, plate, conf = validator.add_candidate(track, "ABC1D23", 0.85)
+    status, plate, conf = validator.add_candidate(track, "ABC1D23", 0.8)
     assert status == "confirmed"
     assert plate == "ABC1D23"
     assert track.is_confirmed is True
+
+
+def test_temporal_validator_auto_accept():
+    validator = TemporalValidator(min_confirm_count=3, max_candidates=5)
+    bbox = BoundingBox(x=10, y=10, width=50, height=20, confidence=0.9)
+    track = Track(track_id=3, bbox=bbox, frame_id=1)
+
+    # Adding a single candidate with high confidence (>= 0.85) should auto-confirm
+    status, plate, conf = validator.add_candidate(track, "ABC1D23", 0.9)
+    assert status == "confirmed"
+    assert plate == "ABC1D23"
+    assert track.is_confirmed is True
+
 
 def test_temporal_validator_rejection():
     validator = TemporalValidator(min_confirm_count=3, max_candidates=4)

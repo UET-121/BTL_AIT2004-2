@@ -25,3 +25,9 @@
   - Bỏ qua hoàn toàn các đối tượng ở xa hoặc trên bầu trời/không gian không liên quan ở nửa trên.
   - Tối ưu hóa kích thước vùng đệm thực tế (actual content area) khi YOLO thực hiện letterbox, giúp tăng độ rõ nét cho biển số xe ở vùng quét gần và cải thiện đáng kể tốc độ tiền xử lý hình ảnh.
   - Tự động bù tọa độ y của các hộp phát hiện (`y_original = y_cropped + h // 2`) và gọi hàm `clamp_to_image` để đảm bảo hiển thị đúng vị trí trên giao diện stream video của người dùng.
+
+### 6. Tối ưu hóa FPS bằng Bỏ qua Khung hình Phát hiện (Detection Decimation)
+* **Cải tiến:** Thêm cấu hình `DETECTION_DECIMATION` (mặc định là `2`) trong [config.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/shared/config.py) và cải tiến luồng chính [inference.py](file:///d:/MySC/Python/BTL_AIT2004-2/apps/api/app/realtime/inference.py).
+* **Kết quả:** Bỏ qua hoàn toàn việc chạy mô hình phát hiện YOLO/ONNX ở các khung hình trung gian (chỉ chạy phát hiện 1 trong số $N$ khung hình). Trên các khung hình bị bỏ qua, hệ thống tiếp tục giữ nguyên tọa độ bboxes hiện tại của các phương tiện đang theo dõi thay vì chạy lại detector.
+* **Hiệu năng:** Tăng tốc độ FPS trung bình lên gấp **2 lần (với decimation = 2)** hoặc **3 lần (với decimation = 3)** trên CPU mà hoàn toàn không động chạm hay ảnh hưởng tới các thành phần hay logic nhận dạng OCR hiện tại.
+

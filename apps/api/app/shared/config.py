@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     onnx_model_path: str = Field(
         default="models/onnx/yolov8-plate-v1.onnx", alias="ONNX_MODEL_PATH"
     )
+    detection_decimation: int = Field(default=2, alias="DETECTION_DECIMATION")
+
 
     # OCR
     ocr_min_confidence: float = Field(default=0.3, alias="OCR_MIN_CONFIDENCE")
